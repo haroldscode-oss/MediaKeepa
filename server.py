@@ -58,15 +58,15 @@ def download():
             command += ["-x", "--audio-format", "mp3"]
             print("Download mode: Audio (MP3)")
         elif format_type == "mp4":
-            # For MP4, use better format selection
+            # For MP4, prefer pre-merged formats to avoid needing ffmpeg
             if quality:
-                # Try to get the requested quality, fallback to best available
-                format_string = f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
-                command += ["-f", format_string, "--merge-output-format", "mp4"]
-                print(f"Download mode: Video (MP4) - Quality: {quality}p")
+                # Try to get pre-merged format at requested quality, or best available
+                format_string = f"best[height<={quality}][ext=mp4]/best[height<={quality}]/best"
+                command += ["-f", format_string]
+                print(f"Download mode: Video (MP4) - Quality: {quality}p or best available")
             else:
-                # If no quality specified, get best
-                command += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best", "--merge-output-format", "mp4"]
+                # If no quality specified, get best mp4
+                command += ["-f", "best[ext=mp4]/best"]
                 print("Download mode: Video (MP4) - Quality: Best available")
 
         print(f"Running command: {' '.join(command)}")
