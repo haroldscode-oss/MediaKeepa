@@ -10,6 +10,10 @@ venv/
 # Temporary downloads
 temp_downloads/
 
+# FFmpeg executables
+ffmpeg.exe
+ffprobe.exe
+
 # OS files
 .DS_Store
 Thumbs.db
