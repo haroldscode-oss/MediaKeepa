@@ -210,7 +210,8 @@ def video_info():
     
     try:
         # Use yt-dlp to get video info in JSON format (FAST - no download)
-        command = ["yt-dlp.exe", "--dump-json", "--no-download", url]
+        # For YouTube, explicitly ignore playlist to speed up
+        command = ["yt-dlp.exe", "--dump-json", "--no-download", "--no-playlist", url]
         
         print(f"\n=== FETCHING VIDEO INFO ===")
         print(f"URL: {url}")
@@ -219,7 +220,7 @@ def video_info():
             command,
             capture_output=True,
             text=True,
-            timeout=10  # Reduced from 15 to 10 seconds
+            timeout=20  # Increased timeout for YouTube
         )
         
         if result.returncode != 0:

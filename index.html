@@ -585,6 +585,13 @@
             transform: translateY(-50%);
             color: var(--light-text);
             font-size: 1.2rem;
+            transition: all 0.3s ease;
+            z-index: 10;
+            pointer-events: none;
+        }
+        
+        .url-icon.fab {
+            font-size: 1.3rem;
         }
 
         .error-message {
@@ -1704,6 +1711,9 @@
                 <a href="#" class="social-link">
                     <i class="fab fa-youtube"></i>
                 </a>
+                <a href="mailto:contact@dropvalley.com" class="social-link" title="Email Us">
+                    <i class="fas fa-envelope"></i>
+                </a>
             </div>
             <p class="copyright">
                 &copy; 2025 Drop Valley. All Rights Reserved. Made with <i class="fas fa-heart" style="color: #ff4444;"></i> in Egypt.
@@ -2076,9 +2086,64 @@
             }, 5000);
         }
         
+        // Platform detection and icon mapping
+        const platformIcons = {
+            'youtube': 'fab fa-youtube',
+            'tiktok': 'fab fa-tiktok',
+            'facebook': 'fab fa-facebook',
+            'instagram': 'fab fa-instagram',
+            'default': 'fas fa-link'
+        };
+        
+        const platformColors = {
+            'youtube': '#FF0000',
+            'tiktok': '#000000',
+            'facebook': '#1877F2',
+            'instagram': '#E4405F',
+            'default': 'var(--primary-color)'
+        };
+        
+        function detectPlatform(url) {
+            if (!url) return 'default';
+            
+            const urlLower = url.toLowerCase();
+            
+            if (urlLower.includes('youtube.com') || urlLower.includes('youtu.be')) {
+                return 'youtube';
+            } else if (urlLower.includes('tiktok.com') || urlLower.includes('vm.tiktok')) {
+                return 'tiktok';
+            } else if (urlLower.includes('facebook.com') || urlLower.includes('fb.watch')) {
+                return 'facebook';
+            } else if (urlLower.includes('instagram.com')) {
+                return 'instagram';
+            }
+            
+            return 'default';
+        }
+        
+        function updatePlatformIcon(platform) {
+            const urlIcon = document.querySelector('.url-icon');
+            if (!urlIcon) return;
+            
+            // Remove all platform icon classes
+            urlIcon.className = 'url-icon';
+            
+            // Add the new platform icon class
+            const iconClass = platformIcons[platform] || platformIcons['default'];
+            urlIcon.className = `url-icon ${iconClass}`;
+            
+            // Update icon color
+            const color = platformColors[platform] || platformColors['default'];
+            urlIcon.style.color = color;
+        }
+        
         // URL input event listener
         urlInput.addEventListener('input', async function() {
             const url = this.value.trim();
+            
+            // Update platform icon based on URL
+            const platform = detectPlatform(url);
+            updatePlatformIcon(platform);
             
             if (errorMessage.style.display === 'block') {
                 errorMessage.style.display = 'none';
