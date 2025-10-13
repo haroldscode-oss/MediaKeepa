@@ -92,8 +92,8 @@ def download():
         # Output template - use explicit extension to prevent file type issues
         output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
         
-        # Base command
-        command = ["yt-dlp.exe", url, "-o", output_template]
+        # Base command with --no-playlist to prevent downloading entire playlists
+        command = ["yt-dlp.exe", url, "-o", output_template, "--no-playlist"]
 
         if format_type == "mp3":
             # For MP3, extract audio only with quality setting
