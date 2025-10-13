@@ -319,7 +319,6 @@
             box-shadow: 0 8px 24px var(--shadow-color) !important;
             filter: none !important;
             opacity: 1 !important;
-            transform: none !important;
         }
 
         .video-preview:hover * {
@@ -1334,12 +1333,14 @@
         .video-thumbnail:hover {
             filter: none !important;
             opacity: 1 !important;
-            background: transparent !important;
-            box-shadow: none !important;
         }
 
-        /* Keep only the original video preview box shadow */
+        /* Keep the video preview container and box shadow visible at all times */
         .video-preview {
+            box-shadow: 0 8px 24px var(--shadow-color) !important;
+        }
+        
+        .video-preview:hover {
             box-shadow: 0 8px 24px var(--shadow-color) !important;
         }
     </style>
