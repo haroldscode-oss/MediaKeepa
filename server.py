@@ -10,12 +10,16 @@ import requests
 import time
 from functools import lru_cache
 import hashlib
+import threading
 
 app = Flask(__name__)
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
 video_cache = {}
 CACHE_DURATION = 3600  # 1 hour in seconds
+
+# In-memory storage for download progress tracking
+download_progress = {}
 
 def sanitize_filename(filename):
     """
@@ -57,6 +61,105 @@ temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
 if not os.path.exists(temp_downloads_path):
     os.makedirs(temp_downloads_path)
 
+def perform_download(session_id, url, format_type, quality, output_template, command):
+    """
+    Perform the actual download in a background thread and track progress
+    """
+    try:
+        download_progress[session_id]['status'] = 'downloading'
+        download_progress[session_id]['message'] = 'Downloading...'
+        
+        print(f"Running command: {' '.join(command)}")
+        
+        # Run the download with real-time output
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        # Parse output in real-time to track progress
+        for line in process.stdout:
+            print(line.strip())
+            
+            # Parse yt-dlp progress line (format: [download]  12.3% of 45.67MiB at 1.23MiB/s ETA 00:12)
+            if '[download]' in line and '%' in line:
+                try:
+                    # Extract percentage
+                    if line.strip().startswith('[download]'):
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if '%' in part:
+                                percent_str = part.replace('%', '')
+                                progress_value = float(percent_str)
+                                download_progress[session_id]['progress'] = min(progress_value, 100)
+                                download_progress[session_id]['message'] = f'Downloading... {progress_value:.1f}%'
+                                break
+                except:
+                    pass
+        
+        process.wait()
+        
+        if process.returncode != 0:
+            download_progress[session_id]['status'] = 'error'
+            download_progress[session_id]['message'] = f'Download failed with return code {process.returncode}'
+            download_progress[session_id]['progress'] = 0
+            return
+        
+        print(f"Download completed successfully!")
+        
+        # Set explicit extension based on format type
+        file_extension = "mp3" if format_type == "mp3" else "mp4"
+        
+        # Find the downloaded file (it will have the session_id prefix)
+        downloaded_files = glob.glob(os.path.join(temp_downloads_path, f"{session_id}_*"))
+        print(f"Looking for files: {temp_downloads_path}\\{session_id}_*")
+        print(f"Found files: {downloaded_files}")
+        
+        if not downloaded_files:
+            print("ERROR: File not found after download")
+            download_progress[session_id]['status'] = 'error'
+            download_progress[session_id]['message'] = 'File not found after download'
+            download_progress[session_id]['progress'] = 0
+            return
+            
+        # Get the original filename
+        original_file = downloaded_files[0]
+        original_filename = os.path.basename(original_file)
+        print(f"Original filename: {original_filename}")
+        
+        # Ensure the file has the correct extension
+        if not original_filename.endswith(f".{file_extension}"):
+            # If the file doesn't have the right extension, add it
+            correct_file = original_file + f".{file_extension}"
+            os.rename(original_file, correct_file)
+            original_file = correct_file
+            original_filename = os.path.basename(correct_file)
+            print(f"Fixed extension, new filename: {original_filename}")
+        
+        # Sanitize the filename to remove special characters
+        sanitized_filename = sanitize_filename(original_filename)
+        print(f"Sanitized filename: {sanitized_filename}")
+        
+        # Rename the file to the sanitized version
+        sanitized_file_path = os.path.join(temp_downloads_path, sanitized_filename)
+        os.rename(original_file, sanitized_file_path)
+        print(f"File renamed to: {sanitized_file_path}")
+        
+        # Mark download as complete
+        download_progress[session_id]['status'] = 'complete'
+        download_progress[session_id]['progress'] = 100
+        download_progress[session_id]['message'] = 'Download complete!'
+        download_progress[session_id]['filename'] = sanitized_filename
+        
+    except Exception as e:
+        print(f"ERROR in download thread: {str(e)}")
+        download_progress[session_id]['status'] = 'error'
+        download_progress[session_id]['message'] = str(e)
+        download_progress[session_id]['progress'] = 0
+
 @app.route("/")
 def serve_index():
     return send_from_directory('.', 'index.html')
@@ -85,6 +188,13 @@ def download():
     try:
         # Generate unique session ID for this download
         session_id = str(uuid.uuid4())[:8]
+        
+        # Initialize progress tracking for this session
+        download_progress[session_id] = {
+            'progress': 0,
+            'status': 'starting',
+            'message': 'Initializing download...'
+        }
         
         # Set explicit extension based on format type
         file_extension = "mp3" if format_type == "mp3" else "mp4"
@@ -117,74 +227,33 @@ def download():
                 command += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "--merge-output-format", "mp4", "--recode-video", "mp4"]
                 print("Download mode: Video (MP4) - Best quality with audio (ffmpeg)")
 
-        print(f"Running command: {' '.join(command)}")
-        
-        # Run the download with real-time output
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
+        # Start download in background thread
+        download_thread = threading.Thread(
+            target=perform_download,
+            args=(session_id, url, format_type, quality, output_template, command)
         )
+        download_thread.daemon = True
+        download_thread.start()
         
-        # Print output in real-time
-        for line in process.stdout:
-            print(line.strip())
-        
-        process.wait()
-        
-        if process.returncode != 0:
-            raise Exception(f"yt-dlp failed with return code {process.returncode}")
-        
-        print(f"Download completed successfully!")
-        
-        # Find the downloaded file (it will have the session_id prefix)
-        downloaded_files = glob.glob(os.path.join(temp_downloads_path, f"{session_id}_*"))
-        print(f"Looking for files: {temp_downloads_path}\\{session_id}_*")
-        print(f"Found files: {downloaded_files}")
-        
-        if not downloaded_files:
-            print("ERROR: File not found after download")
-            return jsonify({"status": "error", "message": "File not found after download. The video may not be available."}), 500
-            
-        # Get the original filename
-        original_file = downloaded_files[0]
-        original_filename = os.path.basename(original_file)
-        print(f"Original filename: {original_filename}")
-        
-        # Ensure the file has the correct extension
-        if not original_filename.endswith(f".{file_extension}"):
-            # If the file doesn't have the right extension, add it
-            correct_file = original_file + f".{file_extension}"
-            os.rename(original_file, correct_file)
-            original_file = correct_file
-            original_filename = os.path.basename(correct_file)
-            print(f"Fixed extension, new filename: {original_filename}")
-        
-        # Sanitize the filename to remove special characters
-        sanitized_filename = sanitize_filename(original_filename)
-        print(f"Sanitized filename: {sanitized_filename}")
-        
-        # Rename the file to the sanitized version
-        sanitized_file_path = os.path.join(temp_downloads_path, sanitized_filename)
-        os.rename(original_file, sanitized_file_path)
-        print(f"File renamed to: {sanitized_file_path}")
-        
+        # Return session_id immediately so frontend can start polling for progress
         return jsonify({
-            "status": "success", 
-            "message": "Download completed",
-            "filename": sanitized_filename
+            "status": "started",
+            "session_id": session_id,
+            "message": "Download started"
         })
-    except subprocess.CalledProcessError as e:
-        error_msg = f"Download failed: {str(e)}"
-        print(f"ERROR: subprocess failed: {e}")
-        print(f"stderr: {e.stderr if hasattr(e, 'stderr') else 'No stderr'}")
-        return jsonify({"status": "error", "message": error_msg}), 500
     except Exception as e:
         error_msg = str(e) if str(e) else "Unknown error occurred during download"
         print(f"ERROR: {type(e).__name__}: {error_msg}")
         return jsonify({"status": "error", "message": error_msg}), 500
+
+# New endpoint to check download progress
+@app.route("/download-progress/<session_id>", methods=["GET"])
+def get_download_progress(session_id):
+    """Get the current progress of a download session"""
+    if session_id not in download_progress:
+        return jsonify({"status": "error", "message": "Session not found"}), 404
+    
+    return jsonify(download_progress[session_id])
 
 @app.route("/video-info", methods=["POST"])
 def video_info():

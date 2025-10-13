@@ -2144,6 +2144,72 @@
             return interval;
         }
         
+        // Function to poll for real download progress
+        async function pollDownloadProgress(sessionId) {
+            progressContainer.style.display = "block";
+            progressBar.style.width = "0%";
+            progressPercent.textContent = "0%";
+            
+            return new Promise((resolve, reject) => {
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const response = await fetch(`/download-progress/${sessionId}`);
+                        
+                        if (!response.ok) {
+                            clearInterval(pollInterval);
+                            reject(new Error('Failed to get progress'));
+                            return;
+                        }
+                        
+                        const progressData = await response.json();
+                        console.log('Progress:', progressData);
+                        
+                        // Update progress bar
+                        const progress = progressData.progress || 0;
+                        progressBar.style.width = progress + "%";
+                        progressPercent.textContent = Math.floor(progress) + "%";
+                        
+                        // Update message
+                        downloadText.textContent = progressData.message || 'Downloading...';
+                        
+                        // Update status-based display
+                        if (progressData.status === 'downloading') {
+                            progressSpeed.textContent = "Downloading...";
+                            progressETA.textContent = progress < 100 ? `${Math.floor(progress)}%` : "Almost done...";
+                        } else if (progressData.status === 'complete') {
+                            // Download complete!
+                            clearInterval(pollInterval);
+                            progressBar.style.width = "100%";
+                            progressPercent.textContent = "100%";
+                            progressSpeed.textContent = "Complete!";
+                            progressETA.textContent = "Done!";
+                            downloadText.textContent = 'Download complete!';
+                            
+                            // Trigger file download
+                            if (progressData.filename) {
+                                console.log('Triggering file download:', progressData.filename);
+                                setTimeout(() => {
+                                    window.location.href = `/get-file/${progressData.filename}`;
+                                    handleDownloadComplete();
+                                }, 500);
+                            }
+                            
+                            resolve();
+                        } else if (progressData.status === 'error') {
+                            // Error occurred
+                            clearInterval(pollInterval);
+                            reject(new Error(progressData.message || 'Download failed'));
+                        }
+                        
+                    } catch (error) {
+                        console.error('Error polling progress:', error);
+                        clearInterval(pollInterval);
+                        reject(error);
+                    }
+                }, 500); // Poll every 500ms for smooth updates
+            });
+        }
+        
         // Function to handle download completion
         function handleDownloadComplete() {
             downloadText.textContent = 'Download Now';
@@ -2376,14 +2442,11 @@
                 
                 watchAdBtn.innerHTML = '<i class="fas fa-check"></i> Ad Completed';
                 adContainer.classList.remove('active');
-                downloadText.textContent = 'Downloading...';
+                downloadText.textContent = 'Starting download...';
                 loadingSpinner.style.display = 'block';
-
-                // Start progress bar simulation
-                simulateProgress(8000);
                 
                 try {
-                    // Actual download would happen here
+                    // Start the download
                     console.log('Sending fetch request to /download...');
                     const response = await fetch('/download', {
                         method: 'POST',
@@ -2405,22 +2468,19 @@
                     const data = await response.json();
                     console.log('Response data:', data);
                     
-                    if (data.status !== 'success') {
-                        throw new Error(data.message || 'Download failed');
+                    if (data.status === 'started' && data.session_id) {
+                        // Download started, now poll for progress
+                        console.log('Download started, session ID:', data.session_id);
+                        await pollDownloadProgress(data.session_id);
+                    } else {
+                        throw new Error(data.message || 'Failed to start download');
                     }
                     
-                    // Trigger file download to user's browser
-                    if (data.filename) {
-                        console.log('Triggering file download:', data.filename);
-                        downloadText.textContent = 'Downloading to your PC...';
-                        window.location.href = `/get-file/${data.filename}`;
-                    }
-                    
-                    handleDownloadComplete();
                 } catch (err) {
                     console.error('Download error:', err);
                     downloadText.textContent = 'Error';
                     loadingSpinner.style.display = 'none';
+                    progressBar.style.width = '0%';
                     errorMessage.textContent = err.message || 'Download failed. Please try again.';
                     errorMessage.style.display = 'block';
                 } finally {
