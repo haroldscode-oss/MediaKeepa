@@ -4,9 +4,30 @@ import os
 import webbrowser
 import glob
 import uuid
+import re
 from pathlib import Path
 
 app = Flask(__name__)
+
+def sanitize_filename(filename):
+    """
+    Sanitize filename to remove special characters that cause URL encoding issues.
+    Keeps alphanumeric, spaces, dots, hyphens, and underscores.
+    """
+    # Remove hashtags completely (TikTok/social media tags)
+    filename = re.sub(r'#\w+', '', filename)
+    
+    # Replace problematic unicode characters with safe alternatives
+    # ⧸ (U+29F8) is a "big solidus" that appears in place of /
+    filename = filename.replace('⧸', '-')
+    
+    # Remove other problematic characters but keep basic punctuation
+    filename = re.sub(r'[^\w\s\-_\.]', '', filename)
+    
+    # Remove multiple spaces and trim
+    filename = re.sub(r'\s+', ' ', filename).strip()
+    
+    return filename
 
 # Automatically open browser on server start
 webbrowser.open("http://127.0.0.1:5000")
@@ -100,14 +121,24 @@ def download():
             print("ERROR: File not found after download")
             return jsonify({"status": "error", "message": "File not found after download. The video may not be available."}), 500
             
-        # Get the filename (just the name, not full path)
-        filename = os.path.basename(downloaded_files[0])
-        print(f"Returning filename: {filename}")
+        # Get the original filename
+        original_file = downloaded_files[0]
+        original_filename = os.path.basename(original_file)
+        print(f"Original filename: {original_filename}")
+        
+        # Sanitize the filename to remove special characters
+        sanitized_filename = sanitize_filename(original_filename)
+        print(f"Sanitized filename: {sanitized_filename}")
+        
+        # Rename the file to the sanitized version
+        sanitized_file_path = os.path.join(temp_downloads_path, sanitized_filename)
+        os.rename(original_file, sanitized_file_path)
+        print(f"File renamed to: {sanitized_file_path}")
         
         return jsonify({
             "status": "success", 
             "message": "Download completed",
-            "filename": filename
+            "filename": sanitized_filename
         })
     except subprocess.CalledProcessError as e:
         error_msg = f"Download failed: {str(e)}"
