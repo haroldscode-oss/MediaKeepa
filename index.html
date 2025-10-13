@@ -308,6 +308,26 @@
             position: relative;
             background-color: var(--input-bg);
             aspect-ratio: 16/9;
+            transition: all 0.3s ease;
+        }
+
+        /* Dynamic Aspect Ratios */
+        .video-preview.vertical {
+            aspect-ratio: 9/16;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .video-preview.square {
+            aspect-ratio: 1/1;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .video-preview.horizontal {
+            aspect-ratio: 16/9;
+            max-width: 650px;
+            margin: 0 auto;
         }
 
         .video-thumbnail {
@@ -1132,6 +1152,19 @@
             .features-grid {
                 grid-template-columns: 1fr;
             }
+
+            /* Mobile adjustments for dynamic aspect ratios */
+            .video-preview.vertical {
+                max-width: 300px;
+            }
+
+            .video-preview.square {
+                max-width: 350px;
+            }
+
+            .video-preview.horizontal {
+                max-width: 100%;
+            }
         }
     </style>
 </head>
@@ -1720,6 +1753,9 @@
                             thumbnail: data.thumbnail,
                             title: data.title,
                             duration: data.duration,
+                            width: data.width || 0,
+                            height: data.height || 0,
+                            orientation: data.orientation || 'horizontal'
                         });
                     } else {
                         // Fallback to basic info if fetch fails
@@ -1822,6 +1858,16 @@
                     const videoInfo = await fetchVideoInfo(url);
                     
                     console.log('Video info received:', videoInfo);
+                    
+                    // Get the video preview element
+                    const videoPreview = document.querySelector('.video-preview');
+                    
+                    // Apply dynamic aspect ratio class based on orientation
+                    if (videoInfo.orientation) {
+                        videoPreview.classList.remove('vertical', 'square', 'horizontal');
+                        videoPreview.classList.add(videoInfo.orientation);
+                        console.log(`Applied aspect ratio: ${videoInfo.orientation} (${videoInfo.width}x${videoInfo.height})`);
+                    }
                     
                     if (videoInfo.success) {
                         if (videoInfo.hasThumbnail && videoInfo.thumbnail) {

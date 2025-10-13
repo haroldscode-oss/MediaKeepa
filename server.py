@@ -223,16 +223,36 @@ def video_info():
                 print(f"Thumbnail download error: {e}")
                 local_thumbnail = thumbnail_url
         
+        # Get video dimensions for aspect ratio detection
+        width = video_data.get("width", 0)
+        height = video_data.get("height", 0)
+        
+        # Determine orientation
+        orientation = "horizontal"  # default
+        if width and height:
+            aspect_ratio = width / height
+            if aspect_ratio < 0.8:  # Vertical videos (9:16 ratio = 0.5625)
+                orientation = "vertical"
+            elif 0.8 <= aspect_ratio <= 1.2:  # Square videos
+                orientation = "square"
+            else:  # Horizontal videos (16:9 ratio = 1.777)
+                orientation = "horizontal"
+        
         info = {
             "status": "success",
             "title": video_data.get("title", "Unknown Title"),
             "duration": video_data.get("duration_string", "Unknown"),
             "thumbnail": local_thumbnail,
-            "hasThumbnail": bool(local_thumbnail)
+            "hasThumbnail": bool(local_thumbnail),
+            "width": width,
+            "height": height,
+            "orientation": orientation
         }
         
         print(f"Title: {info['title']}")
         print(f"Duration: {info['duration']}")
+        print(f"Dimensions: {width}x{height}")
+        print(f"Orientation: {orientation}")
         print(f"Has thumbnail: {info['hasThumbnail']}")
         print(f"Thumbnail: {local_thumbnail}")
         print(f"===========================\n")
