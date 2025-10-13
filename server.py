@@ -7,8 +7,15 @@ import uuid
 import re
 from pathlib import Path
 import requests
+import time
+from functools import lru_cache
+import hashlib
 
 app = Flask(__name__)
+
+# In-memory cache for video metadata (prevents repeated yt-dlp calls)
+video_cache = {}
+CACHE_DURATION = 3600  # 1 hour in seconds
 
 def sanitize_filename(filename):
     """
@@ -153,15 +160,28 @@ def download():
 
 @app.route("/video-info", methods=["POST"])
 def video_info():
-    """Fetch video information including thumbnail using yt-dlp"""
+    """Fetch video information including thumbnail using yt-dlp with caching"""
     data = request.get_json()
     url = data.get("url")
     
     if not url:
         return jsonify({"status": "error", "message": "Missing URL"}), 400
     
+    # Create cache key from URL
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    
+    # Check cache first
+    if cache_key in video_cache:
+        cached_data, cached_time = video_cache[cache_key]
+        if time.time() - cached_time < CACHE_DURATION:
+            print(f"✓ Using cached data for: {url[:50]}...")
+            return jsonify(cached_data)
+        else:
+            # Cache expired, remove it
+            del video_cache[cache_key]
+    
     try:
-        # Use yt-dlp to get video info in JSON format
+        # Use yt-dlp to get video info in JSON format (FAST - no download)
         command = ["yt-dlp.exe", "--dump-json", "--no-download", url]
         
         print(f"\n=== FETCHING VIDEO INFO ===")
@@ -171,7 +191,7 @@ def video_info():
             command,
             capture_output=True,
             text=True,
-            timeout=15
+            timeout=10  # Reduced from 15 to 10 seconds
         )
         
         if result.returncode != 0:
@@ -185,44 +205,58 @@ def video_info():
         import json
         video_data = json.loads(result.stdout)
         
-        # Extract thumbnail URL
+        # Extract thumbnail URL - USE DIRECT URL FOR SPEED (except Instagram)
         thumbnail_url = video_data.get("thumbnail", "")
         local_thumbnail = ""
         
-        # Download thumbnail to our server to bypass CORS!
-        if thumbnail_url:
-            try:
-                session_id = str(uuid.uuid4())[:8]
-                # Determine file extension
-                ext = "jpg"
-                if ".png" in thumbnail_url.lower():
-                    ext = "png"
-                elif ".webp" in thumbnail_url.lower():
-                    ext = "webp"
-                
-                thumbnail_filename = f"thumb_{session_id}.{ext}"
-                thumbnail_path = os.path.join(temp_downloads_path, thumbnail_filename)
-                
-                # Use yt-dlp to download the thumbnail (it handles auth/cookies properly!)
-                thumb_command = ["yt-dlp.exe", "--write-thumbnail", "--skip-download", "-o", 
-                               os.path.join(temp_downloads_path, f"thumb_{session_id}"), url]
-                
-                print(f"Downloading thumbnail...")
-                thumb_result = subprocess.run(thumb_command, capture_output=True, text=True, timeout=10)
-                
-                # Find the downloaded thumbnail file
-                thumb_files = glob.glob(os.path.join(temp_downloads_path, f"thumb_{session_id}.*"))
-                if thumb_files:
-                    actual_thumbnail = os.path.basename(thumb_files[0])
-                    local_thumbnail = f"/thumbnail/{actual_thumbnail}"
-                    print(f"Thumbnail downloaded: {actual_thumbnail}")
-                else:
-                    print("Thumbnail download failed, will try direct URL")
-                    local_thumbnail = thumbnail_url
-                    
-            except Exception as e:
-                print(f"Thumbnail download error: {e}")
+        # For YouTube, construct high-quality thumbnail URL directly
+        if "youtube.com" in url or "youtu.be" in url:
+            video_id = video_data.get("id")
+            if video_id:
+                # Use maxresdefault for best quality, fallback to sddefault
+                thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
                 local_thumbnail = thumbnail_url
+        
+        # For Instagram, download thumbnail locally (CORS blocked otherwise)
+        elif "instagram.com" in url:
+            if thumbnail_url:
+                try:
+                    session_id = str(uuid.uuid4())[:8]
+                    # Determine file extension
+                    ext = "jpg"
+                    if ".png" in thumbnail_url.lower():
+                        ext = "png"
+                    elif ".webp" in thumbnail_url.lower():
+                        ext = "webp"
+                    
+                    thumbnail_filename = f"thumb_{session_id}.{ext}"
+                    
+                    # Use yt-dlp to download the thumbnail (handles Instagram auth)
+                    thumb_command = ["yt-dlp.exe", "--write-thumbnail", "--skip-download", "-o", 
+                                   os.path.join(temp_downloads_path, f"thumb_{session_id}"), url]
+                    
+                    print(f"⏳ Downloading Instagram thumbnail...")
+                    thumb_result = subprocess.run(thumb_command, capture_output=True, text=True, timeout=8)
+                    
+                    # Find the downloaded thumbnail file
+                    thumb_files = glob.glob(os.path.join(temp_downloads_path, f"thumb_{session_id}.*"))
+                    if thumb_files:
+                        actual_thumbnail = os.path.basename(thumb_files[0])
+                        local_thumbnail = f"/thumbnail/{actual_thumbnail}"
+                        print(f"✓ Instagram thumbnail downloaded: {actual_thumbnail}")
+                    else:
+                        print("⚠ Thumbnail download failed, using direct URL (may be blocked)")
+                        local_thumbnail = thumbnail_url
+                        
+                except Exception as e:
+                    print(f"⚠ Thumbnail download error: {e}")
+                    local_thumbnail = thumbnail_url
+            else:
+                local_thumbnail = thumbnail_url
+        
+        # For TikTok and other platforms, use direct URL
+        else:
+            local_thumbnail = thumbnail_url
         
         # Get video dimensions for aspect ratio detection
         width = video_data.get("width", 0)
@@ -246,7 +280,7 @@ def video_info():
             "status": "success",
             "title": video_data.get("title", "Unknown Title"),
             "duration": video_data.get("duration_string", "Unknown"),
-            "thumbnail": local_thumbnail,
+            "thumbnail": local_thumbnail,  # Use local for Instagram, direct for others
             "hasThumbnail": bool(local_thumbnail),
             "width": width,
             "height": height,
@@ -254,13 +288,17 @@ def video_info():
             "uploader": uploader
         }
         
+        # Cache the result
+        video_cache[cache_key] = (info, time.time())
+        
         print(f"Title: {info['title']}")
         print(f"Uploader: {uploader}")
         print(f"Duration: {info['duration']}")
         print(f"Dimensions: {width}x{height}")
         print(f"Orientation: {orientation}")
         print(f"Has thumbnail: {info['hasThumbnail']}")
-        print(f"Thumbnail: {local_thumbnail}")
+        print(f"Thumbnail: {local_thumbnail[:60] if len(local_thumbnail) > 60 else local_thumbnail}")
+        print(f"✓ Cached for future requests")
         print(f"===========================\n")
         
         return jsonify(info)
