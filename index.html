@@ -1600,48 +1600,46 @@
         // Function to fetch video info (simulated)
         function fetchVideoInfo(url) {
             return new Promise((resolve) => {
-                // Simulate API call delay
-                setTimeout(() => {
-                    const videoId = getYouTubeVideoId(url);
-                    if (videoId) {
+                // Use the server endpoint to get real video info from yt-dlp
+                fetch('/video-info', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
                         resolve({
                             success: true,
-                            hasThumbnail: true,
-                            thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                            title: "Sample YouTube Video",
-                            duration: "10:30",
-                        });
-                    } else if (url.includes('facebook.com')) {
-                        resolve({
-                            success: true,
-                            hasThumbnail: false,
-                            thumbnail: "",
-                            title: "Facebook Video",
-                            duration: "05:45",
-                        });
-                    } else if (url.includes('tiktok.com')) {
-                        resolve({
-                            success: true,
-                            hasThumbnail: false,
-                            thumbnail: "",
-                            title: "TikTok Video",
-                            duration: "00:30",
-                        });
-                    } else if (url.includes('instagram.com')) {
-                        resolve({
-                            success: true,
-                            hasThumbnail: false,
-                            thumbnail: "",
-                            title: "Instagram Video",
-                            duration: "01:00",
+                            hasThumbnail: data.hasThumbnail,
+                            thumbnail: data.thumbnail,
+                            title: data.title,
+                            duration: data.duration,
                         });
                     } else {
+                        // Fallback to basic info if fetch fails
                         resolve({
-                            success: false,
-                            message: "Unsupported platform"
+                            success: true,
+                            hasThumbnail: false,
+                            thumbnail: "",
+                            title: "Video",
+                            duration: "Unknown",
                         });
                     }
-                }, 800);
+                })
+                .catch(error => {
+                    console.error('Error fetching video info:', error);
+                    // Fallback to basic info if fetch fails
+                    resolve({
+                        success: true,
+                        hasThumbnail: false,
+                        thumbnail: "",
+                        title: "Video",
+                        duration: "Unknown",
+                    });
+                });
             });
         }
         
@@ -1679,22 +1677,28 @@
                     
                     const videoInfo = await fetchVideoInfo(url);
                     
+                    console.log('Video info received:', videoInfo);
+                    
                     if (videoInfo.success) {
-                        if (videoInfo.hasThumbnail) {
+                        if (videoInfo.hasThumbnail && videoInfo.thumbnail) {
+                            console.log('Loading thumbnail:', videoInfo.thumbnail);
                             videoThumbnail.src = videoInfo.thumbnail;
                             videoThumbnail.onerror = function() {
+                                console.error('Thumbnail failed to load:', videoInfo.thumbnail);
                                 videoThumbnail.style.display = 'none';
                                 thumbnailPlaceholder.style.display = 'flex';
-                                thumbnailPlaceholder.innerHTML = '<i class="fas fa-image"></i><p>Thumbnail not available</p>';
+                                thumbnailPlaceholder.innerHTML = '<i class="fas fa-image"></i><p>Thumbnail blocked by platform</p>';
                             };
                             videoThumbnail.onload = function() {
+                                console.log('Thumbnail loaded successfully');
                                 videoThumbnail.style.display = 'block';
                                 thumbnailPlaceholder.style.display = 'none';
                             };
                         } else {
+                            console.log('No thumbnail available');
                             videoThumbnail.style.display = 'none';
                             thumbnailPlaceholder.style.display = 'flex';
-                            thumbnailPlaceholder.innerHTML = '<i class="fas fa-image"></i><p>Thumbnail not available for this platform</p>';
+                            thumbnailPlaceholder.innerHTML = '<i class="fas fa-image"></i><p>No thumbnail available</p>';
                         }
                         
                         videoTitle.textContent = videoInfo.title;

@@ -150,6 +150,123 @@ def download():
         print(f"ERROR: {type(e).__name__}: {error_msg}")
         return jsonify({"status": "error", "message": error_msg}), 500
 
+@app.route("/video-info", methods=["POST"])
+def video_info():
+    """Fetch video information including thumbnail using yt-dlp"""
+    data = request.get_json()
+    url = data.get("url")
+    
+    if not url:
+        return jsonify({"status": "error", "message": "Missing URL"}), 400
+    
+    try:
+        # Use yt-dlp to get video info in JSON format
+        command = ["yt-dlp.exe", "--dump-json", "--no-download", url]
+        
+        print(f"\n=== FETCHING VIDEO INFO ===")
+        print(f"URL: {url}")
+        
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        
+        if result.returncode != 0:
+            print(f"ERROR: yt-dlp failed: {result.stderr}")
+            return jsonify({
+                "status": "error",
+                "message": "Failed to fetch video info"
+            }), 500
+        
+        # Parse JSON output
+        import json
+        video_data = json.loads(result.stdout)
+        
+        # Extract thumbnail URL
+        thumbnail_url = video_data.get("thumbnail", "")
+        local_thumbnail = ""
+        
+        # Download thumbnail to our server to bypass CORS!
+        if thumbnail_url:
+            try:
+                session_id = str(uuid.uuid4())[:8]
+                # Determine file extension
+                ext = "jpg"
+                if ".png" in thumbnail_url.lower():
+                    ext = "png"
+                elif ".webp" in thumbnail_url.lower():
+                    ext = "webp"
+                
+                thumbnail_filename = f"thumb_{session_id}.{ext}"
+                thumbnail_path = os.path.join(temp_downloads_path, thumbnail_filename)
+                
+                # Use yt-dlp to download the thumbnail (it handles auth/cookies properly!)
+                thumb_command = ["yt-dlp.exe", "--write-thumbnail", "--skip-download", "-o", 
+                               os.path.join(temp_downloads_path, f"thumb_{session_id}"), url]
+                
+                print(f"Downloading thumbnail...")
+                thumb_result = subprocess.run(thumb_command, capture_output=True, text=True, timeout=10)
+                
+                # Find the downloaded thumbnail file
+                thumb_files = glob.glob(os.path.join(temp_downloads_path, f"thumb_{session_id}.*"))
+                if thumb_files:
+                    actual_thumbnail = os.path.basename(thumb_files[0])
+                    local_thumbnail = f"/thumbnail/{actual_thumbnail}"
+                    print(f"Thumbnail downloaded: {actual_thumbnail}")
+                else:
+                    print("Thumbnail download failed, will try direct URL")
+                    local_thumbnail = thumbnail_url
+                    
+            except Exception as e:
+                print(f"Thumbnail download error: {e}")
+                local_thumbnail = thumbnail_url
+        
+        info = {
+            "status": "success",
+            "title": video_data.get("title", "Unknown Title"),
+            "duration": video_data.get("duration_string", "Unknown"),
+            "thumbnail": local_thumbnail,
+            "hasThumbnail": bool(local_thumbnail)
+        }
+        
+        print(f"Title: {info['title']}")
+        print(f"Duration: {info['duration']}")
+        print(f"Has thumbnail: {info['hasThumbnail']}")
+        print(f"Thumbnail: {local_thumbnail}")
+        print(f"===========================\n")
+        
+        return jsonify(info)
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "status": "error",
+            "message": "Request timed out"
+        }), 500
+    except Exception as e:
+        print(f"ERROR: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route("/thumbnail/<filename>")
+def serve_thumbnail(filename):
+    """Serve downloaded thumbnail images"""
+    try:
+        file_path = os.path.join(temp_downloads_path, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"status": "error", "message": "Thumbnail not found"}), 404
+        
+        # Serve the thumbnail
+        return send_file(file_path, mimetype='image/jpeg')
+        
+    except Exception as e:
+        print(f"ERROR serving thumbnail: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/get-file/<filename>")
 def get_file(filename):
     try:
