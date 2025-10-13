@@ -300,6 +300,11 @@
             animation: fadeInUp 0.8s ease-out;
         }
 
+        .video-preview-container:hover {
+            filter: none !important;
+            opacity: 1 !important;
+        }
+
         .video-preview {
             width: 100%;
             border-radius: 12px;
@@ -308,7 +313,18 @@
             position: relative;
             background-color: var(--input-bg);
             aspect-ratio: 16/9;
-            transition: all 0.3s ease;
+        }
+
+        .video-preview:hover {
+            box-shadow: 0 8px 24px var(--shadow-color) !important;
+            filter: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+        }
+
+        .video-preview:hover * {
+            filter: none !important;
+            opacity: 1 !important;
         }
 
         /* Dynamic Aspect Ratios */
@@ -335,6 +351,83 @@
             height: 100%;
             object-fit: cover;
             display: block;
+            cursor: pointer;
+        }
+
+        /* Play Button Overlay */
+        .play-button-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 5rem;
+            color: rgba(255, 255, 255, 0.95);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .play-button-overlay:hover {
+            transform: translate(-50%, -50%) scale(1.1);
+            color: var(--primary-color);
+        }
+
+        /* Video Player */
+        .video-player {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background-color: #000;
+            display: none;
+        }
+
+        .video-player:hover {
+            filter: none !important;
+            opacity: 1 !important;
+        }
+
+        /* Prevent video controls from darkening the video */
+        .video-player::-webkit-media-controls-enclosure {
+            background: transparent !important;
+            backdrop-filter: none !important;
+        }
+
+        .video-player::-webkit-media-controls-panel {
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, transparent 100%) !important;
+        }
+
+        .video-player::-webkit-media-controls {
+            filter: none !important;
+        }
+
+        /* Remove the dark overlay/scrim that appears on hover */
+        .video-player::-webkit-media-text-track-container {
+            background: transparent !important;
+        }
+
+        /* Remove any overlay or shadow from video controls */
+        .video-player::before,
+        .video-player::after {
+            display: none !important;
+        }
+
+        /* Force no darkening on the entire video element */
+        .video-player,
+        .video-player * {
+            filter: brightness(1) !important;
+        }
+
+        #thumbnailContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        #thumbnailContainer:hover {
+            filter: none !important;
+            opacity: 1 !important;
         }
 
         .thumbnail-placeholder {
@@ -362,22 +455,54 @@
         }
 
         .video-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
             color: var(--text-color);
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
 
-        .video-duration {
-            font-size: 0.9rem;
-            color: var(--light-text);
+        .video-creator {
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.95rem;
+            color: var(--light-text);
         }
 
-        .video-duration i {
+        .video-creator i {
             color: var(--primary-color);
+            font-size: 1rem;
+        }
+
+        .video-creator-name {
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .video-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .video-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.9rem;
+            color: var(--light-text);
+        }
+
+        .video-meta-item i {
+            color: var(--primary-color);
+            font-size: 0.95rem;
         }
 
         /* Main Content Styles */
@@ -1165,6 +1290,50 @@
             .video-preview.horizontal {
                 max-width: 100%;
             }
+
+            /* Mobile adjustments for enhanced video preview */
+            .video-info {
+                padding: 1rem;
+            }
+
+            .video-title {
+                font-size: 1.1rem;
+            }
+
+            .video-meta {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+        }
+
+        /* ULTRA AGGRESSIVE FIX: Prevent ANY darkening on video area hover */
+        .video-preview-container *,
+        .video-preview *,
+        #thumbnailContainer *,
+        .video-player,
+        .video-thumbnail {
+            filter: none !important;
+            opacity: 1 !important;
+            background: none !important;
+        }
+
+        .video-preview-container:hover,
+        .video-preview-container:hover *,
+        .video-preview:hover,
+        .video-preview:hover *,
+        #thumbnailContainer:hover,
+        #thumbnailContainer:hover *,
+        .video-player:hover,
+        .video-thumbnail:hover {
+            filter: none !important;
+            opacity: 1 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+
+        /* Keep only the original video preview box shadow */
+        .video-preview {
+            box-shadow: 0 8px 24px var(--shadow-color) !important;
         }
     </style>
 </head>
@@ -1324,6 +1493,10 @@
                 <div class="video-preview">
                     <div id="thumbnailContainer">
                         <img src="" alt="Video thumbnail" class="video-thumbnail" id="videoThumbnail">
+                        <div class="play-button-overlay" id="playButtonOverlay">
+                            <i class="fas fa-play-circle"></i>
+                        </div>
+                        <video class="video-player" id="videoPlayer" controls autoplay playsinline style="display: none;"></video>
                         <div class="thumbnail-placeholder" id="thumbnailPlaceholder" style="display: none;">
                             <i class="fas fa-image"></i>
                             <p>Thumbnail not available for this video</p>
@@ -1331,10 +1504,18 @@
                     </div>
                     <div class="video-info">
                         <h3 class="video-title" id="videoTitle">Video Title</h3>
-                        <p class="video-duration">
-                            <i class="fas fa-clock"></i>
-                            <span id="videoDuration">00:00</span>
-                        </p>
+                        
+                        <div class="video-creator" id="videoCreator" style="display: none;">
+                            <i class="fas fa-user-circle"></i>
+                            <span class="video-creator-name" id="videoCreatorName">Creator</span>
+                        </div>
+                        
+                        <div class="video-meta">
+                            <div class="video-meta-item">
+                                <i class="fas fa-clock"></i>
+                                <span id="videoDuration">00:00</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1635,8 +1816,14 @@
         const thumbnailPlaceholder = document.getElementById('thumbnailPlaceholder');
         const videoTitle = document.getElementById('videoTitle');
         const videoDuration = document.getElementById('videoDuration');
+        const videoCreator = document.getElementById('videoCreator');
+        const videoCreatorName = document.getElementById('videoCreatorName');
         const pasteBtn = document.getElementById('pasteBtn');
         const downloadAnotherBtn = document.getElementById('downloadAnotherBtn');
+        
+        // Video player elements
+        const playButtonOverlay = document.getElementById('playButtonOverlay');
+        const videoPlayer = document.getElementById('videoPlayer');
         
         // Progress bar elements
         const progressContainer = document.getElementById('progressContainer');
@@ -1665,6 +1852,57 @@
                 // Fallback for browsers that don't support clipboard API
                 urlInput.focus();
                 document.execCommand('paste');
+            }
+        });
+        
+        // Play button click handler - Stream video via yt-dlp
+        let currentVideoUrl = '';
+        
+        videoThumbnail.addEventListener('click', async function() {
+            if (!currentVideoUrl) return;
+            
+            try {
+                // Show loading state
+                playButtonOverlay.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                
+                // Get stream session from server
+                const response = await fetch('http://127.0.0.1:5000/get-stream-session', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url: currentVideoUrl })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.sessionId) {
+                    // Hide thumbnail and play button
+                    videoThumbnail.style.display = 'none';
+                    playButtonOverlay.style.display = 'none';
+                    
+                    // Create stream URL with session ID
+                    const streamUrl = `http://127.0.0.1:5000/stream-video/${data.sessionId}?url=${encodeURIComponent(currentVideoUrl)}`;
+                    
+                    // Load video stream
+                    videoPlayer.src = streamUrl;
+                    videoPlayer.style.display = 'block';
+                    
+                    // Attempt to play
+                    videoPlayer.play().catch(err => {
+                        console.log('Autoplay prevented:', err);
+                    });
+                    
+                    console.log('Video stream started');
+                } else {
+                    throw new Error(data.message || 'Failed to create stream session');
+                }
+            } catch (error) {
+                console.error('Error loading video:', error);
+                alert('Unable to load video preview. You can still download it!');
+                
+                // Restore play button
+                playButtonOverlay.innerHTML = '<i class="fas fa-play-circle"></i>';
             }
         });
         
@@ -1755,7 +1993,8 @@
                             duration: data.duration,
                             width: data.width || 0,
                             height: data.height || 0,
-                            orientation: data.orientation || 'horizontal'
+                            orientation: data.orientation || 'horizontal',
+                            uploader: data.uploader || ''
                         });
                     } else {
                         // Fallback to basic info if fetch fails
@@ -1847,6 +2086,15 @@
             
             if (url && validateUrl(url)) {
                 try {
+                    // Store current URL for video player
+                    currentVideoUrl = url;
+                    
+                    // Reset video player state
+                    videoPlayer.src = '';
+                    videoPlayer.style.display = 'none';
+                    playButtonOverlay.style.display = 'none';
+                    playButtonOverlay.innerHTML = '<i class="fas fa-play-circle"></i>';
+                    
                     // Show loading state for preview
                     videoPreviewContainer.style.display = 'block';
                     videoThumbnail.style.display = 'none';
@@ -1883,16 +2131,26 @@
                                 console.log('Thumbnail loaded successfully');
                                 videoThumbnail.style.display = 'block';
                                 thumbnailPlaceholder.style.display = 'none';
+                                playButtonOverlay.style.display = 'block';
                             };
                         } else {
                             console.log('No thumbnail available');
                             videoThumbnail.style.display = 'none';
                             thumbnailPlaceholder.style.display = 'flex';
                             thumbnailPlaceholder.innerHTML = '<i class="fas fa-image"></i><p>No thumbnail available</p>';
+                            playButtonOverlay.style.display = 'none';
                         }
                         
                         videoTitle.textContent = videoInfo.title;
                         videoDuration.textContent = videoInfo.duration;
+                        
+                        // Populate creator/uploader
+                        if (videoInfo.uploader && videoInfo.uploader !== 'Unknown Creator') {
+                            videoCreatorName.textContent = videoInfo.uploader;
+                            videoCreator.style.display = 'flex';
+                        } else {
+                            videoCreator.style.display = 'none';
+                        }
                         
                         // Show format options
                         formatOptions.style.display = 'flex';

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 import subprocess
 import os
 import webbrowser
@@ -6,6 +6,7 @@ import glob
 import uuid
 import re
 from pathlib import Path
+import requests
 
 app = Flask(__name__)
 
@@ -238,6 +239,9 @@ def video_info():
             else:  # Horizontal videos (16:9 ratio = 1.777)
                 orientation = "horizontal"
         
+        # Extract basic metadata only (no sensitive stats)
+        uploader = video_data.get("uploader") or video_data.get("channel") or video_data.get("creator") or "Unknown Creator"
+        
         info = {
             "status": "success",
             "title": video_data.get("title", "Unknown Title"),
@@ -246,10 +250,12 @@ def video_info():
             "hasThumbnail": bool(local_thumbnail),
             "width": width,
             "height": height,
-            "orientation": orientation
+            "orientation": orientation,
+            "uploader": uploader
         }
         
         print(f"Title: {info['title']}")
+        print(f"Uploader: {uploader}")
         print(f"Duration: {info['duration']}")
         print(f"Dimensions: {width}x{height}")
         print(f"Orientation: {orientation}")
@@ -258,6 +264,58 @@ def video_info():
         print(f"===========================\n")
         
         return jsonify(info)
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "status": "error",
+            "message": "Request timed out"
+        }), 500
+    except Exception as e:
+        print(f"ERROR: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route("/get-video-url", methods=["POST"])
+def get_video_url():
+    """Get direct video stream URL for preview player"""
+    data = request.get_json()
+    url = data.get("url")
+    
+    if not url:
+        return jsonify({"status": "error", "message": "Missing URL"}), 400
+    
+    try:
+        # Use yt-dlp to get the best video URL (medium quality for preview)
+        command = ["yt-dlp.exe", "--get-url", "-f", "best[height<=720]/best", url]
+        
+        print(f"\n=== FETCHING VIDEO STREAM URL ===")
+        print(f"URL: {url}")
+        
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            print(f"ERROR: yt-dlp failed: {result.stderr}")
+            return jsonify({
+                "status": "error",
+                "message": "Failed to get video stream URL"
+            }), 500
+        
+        video_url = result.stdout.strip()
+        
+        print(f"Video stream URL obtained")
+        print(f"===========================\n")
+        
+        return jsonify({
+            "status": "success",
+            "videoUrl": video_url
+        })
         
     except subprocess.TimeoutExpired:
         return jsonify({
@@ -314,6 +372,188 @@ def get_file(filename):
         return response
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/stream-video/<session_id>")
+def stream_video(session_id):
+    """Stream video directly using yt-dlp piping"""
+    try:
+        # Get the video URL from session (we'll store it temporarily)
+        video_url = request.args.get('url')
+        
+        if not video_url:
+            return jsonify({
+                "status": "error",
+                "message": "No URL provided"
+            }), 400
+        
+        print(f"\n===========================")
+        print(f"Streaming video via yt-dlp")
+        print(f"URL: {video_url}")
+        print(f"Session: {session_id}")
+        print(f"===========================")
+        
+        # Use yt-dlp to pipe video directly to stdout
+        # For YouTube, use format that doesn't require merging (pre-merged formats)
+        # For other platforms, use best available format
+        if 'youtube.com' in video_url or 'youtu.be' in video_url:
+            # YouTube: Use pre-merged formats only (no ffmpeg required)
+            format_string = "18/best[height<=480][ext=mp4]/best[ext=mp4]/best"
+        else:
+            # Other platforms: Use best format up to 720p
+            format_string = "best[height<=720][ext=mp4]/best[height<=720]/best"
+        
+        cmd = [
+            "yt-dlp.exe",
+            "-f", format_string,
+            "-o", "-",  # Output to stdout
+            video_url
+        ]
+        
+        # Start yt-dlp process
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        def generate():
+            """Generator to stream video chunks"""
+            try:
+                while True:
+                    chunk = process.stdout.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                process.stdout.close()
+                process.wait()
+        
+        return Response(
+            generate(),
+            mimetype='video/mp4',
+            headers={
+                'Accept-Ranges': 'bytes',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-cache'
+            }
+        )
+        
+    except Exception as e:
+        print(f"ERROR streaming video: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route("/get-stream-session", methods=['POST'])
+def get_stream_session():
+    """Generate a session ID for video streaming"""
+    try:
+        data = request.json
+        video_url = data.get('url')
+        
+        if not video_url:
+            return jsonify({
+                "status": "error",
+                "message": "No URL provided"
+            }), 400
+        
+        # Generate unique session ID
+        session_id = str(uuid.uuid4())
+        
+        print(f"\n===========================")
+        print(f"Created stream session")
+        print(f"URL: {video_url}")
+        print(f"Session: {session_id}")
+        print(f"===========================\n")
+        
+        return jsonify({
+            "status": "success",
+            "sessionId": session_id
+        })
+        
+    except Exception as e:
+        print(f"ERROR: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route("/proxy-video")
+def proxy_video():
+    """Proxy video stream with Range header support"""
+    try:
+        video_url = request.args.get('url')
+        
+        if not video_url:
+            return jsonify({
+                "status": "error",
+                "message": "No URL provided"
+            }), 400
+        
+        # Get Range header from client
+        range_header = request.headers.get('Range')
+        
+        # Prepare comprehensive headers to bypass anti-hotlinking
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'identity',
+            'Origin': 'https://www.tiktok.com',
+            'Referer': 'https://www.tiktok.com/',
+            'Sec-Fetch-Dest': 'video',
+            'Sec-Fetch-Mode': 'no-cors',
+            'Sec-Fetch-Site': 'same-site'
+        }
+        
+        if range_header:
+            headers['Range'] = range_header
+        
+        # Stream the video from the source with a timeout
+        response = requests.get(video_url, headers=headers, stream=True, timeout=30)
+        
+        print(f"Video proxy response status: {response.status_code}")
+        
+        # If we get 403, the URL might be expired or need different headers
+        if response.status_code == 403:
+            print(f"ERROR: 403 Forbidden - Video URL may be expired or blocked")
+            return jsonify({
+                "status": "error",
+                "message": "Video access denied. The video URL may have expired."
+            }), 403
+        
+        # Create Flask response with proper headers
+        flask_response = Response(
+            response.iter_content(chunk_size=8192),
+            status=response.status_code,
+            content_type=response.headers.get('Content-Type', 'video/mp4')
+        )
+        
+        # Copy important headers
+        if 'Content-Range' in response.headers:
+            flask_response.headers['Content-Range'] = response.headers['Content-Range']
+        if 'Content-Length' in response.headers:
+            flask_response.headers['Content-Length'] = response.headers['Content-Length']
+        
+        flask_response.headers['Accept-Ranges'] = 'bytes'
+        flask_response.headers['Access-Control-Allow-Origin'] = '*'
+        flask_response.headers['Cache-Control'] = 'no-cache'
+        
+        return flask_response
+        
+    except requests.exceptions.Timeout:
+        print(f"ERROR: Request timed out")
+        return jsonify({
+            "status": "error",
+            "message": "Video request timed out"
+        }), 504
+    except Exception as e:
+        print(f"ERROR proxying video: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 if __name__ == "__main__":
     app.run(debug=False)
