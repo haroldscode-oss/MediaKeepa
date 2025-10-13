@@ -978,6 +978,86 @@
             box-shadow: 0 6px 24px rgba(109, 40, 217, 0.5);
         }
 
+        /* Progress Bar Styles */
+        .progress-container {
+            width: 100%;
+            margin-top: 1.5rem;
+            padding: 1.2rem;
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: 0 4px 16px var(--shadow-color);
+            border: 1px solid var(--border-color);
+            animation: fadeInUp 0.4s ease-out;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.8rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        #progressPercent {
+            color: var(--primary-color);
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        #progressSpeed {
+            color: var(--light-text);
+        }
+
+        .progress-bar-wrapper {
+            width: 100%;
+            height: 24px;
+            background: var(--input-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 0.8rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+            border-radius: 12px;
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.3),
+                transparent
+            );
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .progress-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: var(--light-text);
+        }
+
         /* Success Message */
         .success-message {
             color: var(--success-color);
@@ -1283,7 +1363,22 @@
                 <span id="downloadText">Download Now</span>
                 <span id="loadingSpinner" class="loading-spinner"></span>
             </button>
-            
+
+            <!-- Progress Bar Section -->
+            <div class="progress-container" id="progressContainer" style="display: none;">
+                <div class="progress-info">
+                    <span id="progressPercent">0%</span>
+                    <span id="progressSpeed">Initializing...</span>
+                </div>
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-details">
+                    <span id="progressSize">0 MB / 0 MB</span>
+                    <span id="progressETA">ETA: Calculating...</span>
+                </div>
+            </div>
+
             <!-- Download Another Button -->
             <button class="download-another-btn" id="downloadAnotherBtn">
                 <i class="fas fa-sync-alt"></i>
@@ -1510,6 +1605,14 @@
         const pasteBtn = document.getElementById('pasteBtn');
         const downloadAnotherBtn = document.getElementById('downloadAnotherBtn');
         
+        // Progress bar elements
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressSpeed = document.getElementById('progressSpeed');
+        const progressSize = document.getElementById('progressSize');
+        const progressETA = document.getElementById('progressETA');
+        
         let selectedFormat = null;
         let selectedQuality = null;
         
@@ -1641,6 +1744,47 @@
                     });
                 });
             });
+        }
+        
+        // Function to simulate progress bar
+        function simulateProgress(duration = 8000) {
+            progressContainer.style.display = "block";
+            progressBar.style.width = "0%";
+            progressPercent.textContent = "0%";
+            
+            const startTime = Date.now();
+            const speeds = [2.1, 3.5, 5.2, 4.8, 6.3, 7.1, 5.9, 4.2];
+            let speedIndex = 0;
+            
+            const interval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min((elapsed / duration) * 100, 99);
+                
+                progressBar.style.width = progress + "%";
+                progressPercent.textContent = Math.floor(progress) + "%";
+                
+                const currentSpeed = speeds[speedIndex % speeds.length];
+                progressSpeed.textContent = currentSpeed.toFixed(1) + " MB/s";
+                speedIndex++;
+                
+                const totalSize = 15;
+                const downloaded = (progress / 100) * totalSize;
+                progressSize.textContent = downloaded.toFixed(1) + " MB / " + totalSize + " MB";
+                
+                const remaining = duration - elapsed;
+                const seconds = Math.ceil(remaining / 1000);
+                progressETA.textContent = seconds > 0 ? "ETA: " + seconds + "s" : "ETA: Almost done...";
+                
+                if (progress >= 99) {
+                    clearInterval(interval);
+                    progressPercent.textContent = "100%";
+                    progressBar.style.width = "100%";
+                    progressSpeed.textContent = "Complete!";
+                    progressETA.textContent = "Done!";
+                }
+            }, 200);
+            
+            return interval;
         }
         
         // Function to handle download completion
@@ -1784,6 +1928,9 @@
                 adContainer.classList.remove('active');
                 downloadText.textContent = 'Downloading...';
                 loadingSpinner.style.display = 'block';
+
+                // Start progress bar simulation
+                simulateProgress(8000);
                 
                 try {
                     // Actual download would happen here
@@ -1862,3 +2009,6 @@
     </script>
 </body>
 </html>
+
+
+
