@@ -2164,8 +2164,8 @@
                     videoPreviewContainer.style.display = 'block';
                     videoThumbnail.style.display = 'none';
                     thumbnailPlaceholder.style.display = 'flex';
-                    thumbnailPlaceholder.innerHTML = '<i class="fas fa-spinner fa-spin"></i><p>Loading video info...</p>';
-                    videoTitle.textContent = 'Loading video info...';
+                    thumbnailPlaceholder.innerHTML = '<i class="fas fa-spinner fa-spin"></i><p>Loading video preview...</p>';
+                    videoTitle.textContent = 'Loading video preview...';
                     videoDuration.textContent = '00:00';
                     
                     const videoInfo = await fetchVideoInfo(url);
