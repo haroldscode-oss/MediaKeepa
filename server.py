@@ -305,6 +305,36 @@ def video_info():
         # Extract basic metadata only (no sensitive stats)
         uploader = video_data.get("uploader") or video_data.get("channel") or video_data.get("creator") or "Unknown Creator"
         
+        # Extract music/audio metadata if available
+        track = video_data.get("track") or video_data.get("alt_title")
+        artist = video_data.get("artist") or video_data.get("creator")
+        album = video_data.get("album")
+        
+        # Build music info object
+        music_info = None
+        if track or artist:
+            music_info = {
+                "track": track or "Unknown Track",
+                "artist": artist or "Unknown Artist",
+                "album": album
+            }
+        else:
+            # Try to parse music info from title for YouTube music videos
+            title = video_data.get("title", "")
+            # Common patterns: "Artist - Song", "Song - Artist", "Artist: Song", "Song (Official Video)"
+            if " - " in title:
+                parts = title.split(" - ", 1)
+                if len(parts) == 2:
+                    # Check if it looks like music (contains common indicators)
+                    title_lower = title.lower()
+                    music_indicators = ["official", "lyrics", "audio", "music", "video", "mv", "visualizer"]
+                    if any(indicator in title_lower for indicator in music_indicators):
+                        music_info = {
+                            "track": parts[1].split("(")[0].strip(),  # Remove (Official Video) etc
+                            "artist": parts[0].strip(),
+                            "album": None
+                        }
+        
         info = {
             "status": "success",
             "title": video_data.get("title", "Unknown Title"),
@@ -314,7 +344,8 @@ def video_info():
             "width": width,
             "height": height,
             "orientation": orientation,
-            "uploader": uploader
+            "uploader": uploader,
+            "music": music_info
         }
         
         # Cache the result
@@ -327,6 +358,10 @@ def video_info():
         print(f"Orientation: {orientation}")
         print(f"Has thumbnail: {info['hasThumbnail']}")
         print(f"Thumbnail: {local_thumbnail[:60] if len(local_thumbnail) > 60 else local_thumbnail}")
+        if music_info:
+            print(f"🎵 Music Detected: {music_info.get('track', 'Unknown')} by {music_info.get('artist', 'Unknown')}")
+        else:
+            print(f"🎵 No music metadata found")
         print(f"✓ Cached for future requests")
         print(f"===========================\n")
         

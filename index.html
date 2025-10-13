@@ -453,16 +453,35 @@
             border-top: 1px solid var(--border-color);
         }
 
-        .video-title {
-            font-size: 1.25rem;
-            font-weight: 700;
+        /* Video Header (Title + Duration above preview) */
+        .video-header {
             margin-bottom: 1rem;
+            padding: 0 0.5rem;
+        }
+
+        .video-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
             color: var(--text-color);
             line-height: 1.4;
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
+        }
+
+        .video-duration-header {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.9rem;
+            color: var(--light-text);
+        }
+
+        .video-duration-header i {
+            color: var(--primary-color);
+            font-size: 0.95rem;
         }
 
         .video-creator {
@@ -502,6 +521,44 @@
         .video-meta-item i {
             color: var(--primary-color);
             font-size: 0.95rem;
+        }
+
+        .video-music {
+            display: none;
+            background: linear-gradient(135deg, rgba(109, 40, 217, 0.1), rgba(59, 130, 246, 0.1));
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            margin-top: 0.75rem;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .video-music.active {
+            display: block;
+        }
+
+        .music-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--primary-color);
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+        }
+
+        .music-details {
+            font-size: 0.9rem;
+            color: var(--text-color);
+        }
+
+        .music-track {
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+
+        .music-artist {
+            color: var(--light-text);
+            font-size: 0.85rem;
         }
 
         /* Main Content Styles */
@@ -1498,6 +1555,15 @@
             
             <!-- Video Preview Container -->
             <div class="video-preview-container" id="videoPreviewContainer">
+                <!-- Title and Duration Above Preview -->
+                <div class="video-header">
+                    <h3 class="video-title" id="videoTitle">Video Title</h3>
+                    <div class="video-duration-header">
+                        <i class="fas fa-clock"></i>
+                        <span id="videoDuration">00:00</span>
+                    </div>
+                </div>
+                
                 <div class="video-preview">
                     <div id="thumbnailContainer">
                         <img src="" alt="Video thumbnail" class="video-thumbnail" id="videoThumbnail">
@@ -1511,17 +1577,19 @@
                         </div>
                     </div>
                     <div class="video-info">
-                        <h3 class="video-title" id="videoTitle">Video Title</h3>
-                        
                         <div class="video-creator" id="videoCreator" style="display: none;">
                             <i class="fas fa-user-circle"></i>
                             <span class="video-creator-name" id="videoCreatorName">Creator</span>
                         </div>
                         
-                        <div class="video-meta">
-                            <div class="video-meta-item">
-                                <i class="fas fa-clock"></i>
-                                <span id="videoDuration">00:00</span>
+                        <div class="video-music" id="videoMusic">
+                            <div class="music-title">
+                                <i class="fas fa-music"></i>
+                                <span>Music Detected</span>
+                            </div>
+                            <div class="music-details">
+                                <div class="music-track" id="musicTrack">Track Name</div>
+                                <div class="music-artist" id="musicArtist">Artist Name</div>
                             </div>
                         </div>
                     </div>
@@ -1829,6 +1897,9 @@
         const videoDuration = document.getElementById('videoDuration');
         const videoCreator = document.getElementById('videoCreator');
         const videoCreatorName = document.getElementById('videoCreatorName');
+        const videoMusic = document.getElementById('videoMusic');
+        const musicTrack = document.getElementById('musicTrack');
+        const musicArtist = document.getElementById('musicArtist');
         const pasteBtn = document.getElementById('pasteBtn');
         const downloadAnotherBtn = document.getElementById('downloadAnotherBtn');
         
@@ -2216,6 +2287,15 @@
                             videoCreator.style.display = 'flex';
                         } else {
                             videoCreator.style.display = 'none';
+                        }
+                        
+                        // Populate music info if available
+                        if (videoInfo.music) {
+                            musicTrack.textContent = videoInfo.music.track || 'Unknown Track';
+                            musicArtist.textContent = videoInfo.music.artist || 'Unknown Artist';
+                            videoMusic.classList.add('active');
+                        } else {
+                            videoMusic.classList.remove('active');
                         }
                         
                         // Show format options
