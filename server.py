@@ -20,22 +20,32 @@ CACHE_DURATION = 3600  # 1 hour in seconds
 def sanitize_filename(filename):
     """
     Sanitize filename to remove special characters that cause URL encoding issues.
-    Keeps alphanumeric, spaces, dots, hyphens, and underscores.
+    Replaces spaces with underscores for better compatibility.
     """
-    # Remove hashtags completely (TikTok/social media tags)
-    filename = re.sub(r'#\w+', '', filename)
+    # Split filename into name and extension
+    name, ext = os.path.splitext(filename)
+    
+    # Remove just the # symbol but keep the hashtag text (TikTok/social media tags)
+    name = name.replace('#', '')
     
     # Replace problematic unicode characters with safe alternatives
     # ⧸ (U+29F8) is a "big solidus" that appears in place of /
-    filename = filename.replace('⧸', '-')
+    name = name.replace('⧸', '-')
     
     # Remove other problematic characters but keep basic punctuation
-    filename = re.sub(r'[^\w\s\-_\.]', '', filename)
+    name = re.sub(r'[^\w\s\-_]', '', name)
     
     # Remove multiple spaces and trim
-    filename = re.sub(r'\s+', ' ', filename).strip()
+    name = re.sub(r'\s+', ' ', name).strip()
     
-    return filename
+    # Replace all spaces with underscores for better compatibility
+    name = name.replace(' ', '_')
+    
+    # If name is empty or too short, use a default name
+    if not name or len(name) < 3:
+        name = "video"
+    
+    return name + ext
 
 # Automatically open browser on server start
 webbrowser.open("http://127.0.0.1:5000")
@@ -76,16 +86,25 @@ def download():
         # Generate unique session ID for this download
         session_id = str(uuid.uuid4())[:8]
         
-        # Output template to track the filename
-        output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.%(ext)s")
+        # Set explicit extension based on format type
+        file_extension = "mp3" if format_type == "mp3" else "mp4"
+        
+        # Output template - use explicit extension to prevent file type issues
+        output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
         
         # Base command
         command = ["yt-dlp.exe", url, "-o", output_template]
 
         if format_type == "mp3":
-            # For MP3, extract audio only
-            command += ["-x", "--audio-format", "mp3"]
-            print("Download mode: Audio (MP3)")
+            # For MP3, extract audio only with quality setting
+            command += [
+                "-x", 
+                "--audio-format", "mp3",
+                "--audio-quality", f"{quality}k" if quality else "192",
+                "--embed-thumbnail",
+                "--add-metadata"
+            ]
+            print(f"Download mode: Audio (MP3) - Quality: {quality if quality else 192}kbps")
         elif format_type == "mp4":
             # For MP4, prefer MP4 container formats to avoid audio issues
             if quality:
@@ -133,6 +152,15 @@ def download():
         original_file = downloaded_files[0]
         original_filename = os.path.basename(original_file)
         print(f"Original filename: {original_filename}")
+        
+        # Ensure the file has the correct extension
+        if not original_filename.endswith(f".{file_extension}"):
+            # If the file doesn't have the right extension, add it
+            correct_file = original_file + f".{file_extension}"
+            os.rename(original_file, correct_file)
+            original_file = correct_file
+            original_filename = os.path.basename(correct_file)
+            print(f"Fixed extension, new filename: {original_filename}")
         
         # Sanitize the filename to remove special characters
         sanitized_filename = sanitize_filename(original_filename)
