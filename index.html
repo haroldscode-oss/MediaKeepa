@@ -2493,19 +2493,15 @@
             watchAdBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
             
             // ============================================
-            // PROPELLERADS INTERSTITIAL AD TRIGGER
+            // MONETAG AD TRIGGER
             // ============================================
-            // After signing up at PropellerAds, you'll get an interstitial ad code.
-            // Replace the setTimeout below with your PropellerAds interstitial trigger.
-            // Example format:
-            // if (typeof window.propellerads !== 'undefined') {
-            //     window.propellerads.showInterstitial();
-            // }
-            // The ad will show, and when user closes it, call proceedWithDownload()
-            // For now, using setTimeout to simulate the ad delay
-            // ============================================
+            // Monetag's script will automatically trigger the pop-under
+            // based on user clicks. No manual trigger needed!
+            console.log('Monetag will handle the pop-under automatically');
             
+            // Proceed with download after a short delay
             setTimeout(async () => {
+                console.log('Proceeding with download...');
                 await proceedWithDownload();
             }, 2000);
         });
@@ -2608,6 +2604,28 @@
         }
     </script>
 
+    <!-- ============================================ -->
+    <!-- MONETAG AD INTEGRATION -->
+    <!-- ============================================ -->
+    <!-- Monetag callback functions for ad loading -->
+    <script>
+        // Callback function when Monetag tag.min.js fails to load
+        function _alxknns() {
+            console.warn('⚠️ Monetag tag.min.js failed to load (may be blocked by ad blocker)');
+        }
+        
+        // Callback function when Monetag tag.min.js loads successfully
+        function _scioyl() {
+            console.log('✅ Monetag tag.min.js loaded successfully');
+        }
+    </script>
+    
+    <!-- Load the main Monetag pop-under code -->
+    <script src="monetag-ads.js"></script>
+    
+    <!-- Load Monetag tag.min.js (secondary script) -->
+    <script src="//x7i0.com/tag.min.js" data-zone="10037537" data-cfasync="false" async onerror="_alxknns()" onload="_scioyl()"></script>
+    
     <!-- Adsterra Social Bar (Sticky Footer) -->
     <div id="adsterra-social-bar">
         <!-- ADSTERRA_SOCIAL_BAR_CODE_HERE -->
