@@ -172,8 +172,19 @@ def perform_download(session_id, url, format_type, quality, output_template, com
         download_progress[session_id]['progress'] = 100
         download_progress[session_id]['message'] = 'Processing file...'
         
-        # Set explicit extension based on format type
-        file_extension = "mp3" if format_type == "mp3" else "mp4"
+        # Determine file extension based on format type
+        image_formats = ["png", "webp", "jpg", "jpeg"]
+        video_formats = ["mp4", "webm", "mkv"]
+        audio_formats = ["mp3", "m4a", "flac"]
+        
+        if format_type.lower() in image_formats:
+            file_extension = format_type.lower()
+        elif format_type.lower() in audio_formats:
+            file_extension = format_type.lower()
+        elif format_type.lower() in video_formats:
+            file_extension = format_type.lower()
+        else:
+            file_extension = "mp4"  # Default fallback
         
         # Find the downloaded file (it will have the session_id prefix)
         downloaded_files = glob.glob(os.path.join(temp_downloads_path, f"{session_id}_*"))
@@ -281,36 +292,77 @@ def download():
             'message': 'Initializing download...'
         }
         
-        # Set explicit extension based on format type
-        file_extension = "mp3" if format_type == "mp3" else "mp4"
+        # Check if this is an image format request
+        image_formats = ["png", "webp", "jpg", "jpeg"]
+        is_image_format = format_type.lower() in image_formats
         
-        # Output template - use explicit extension to prevent file type issues
-        output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
-        
-        # Base command with --no-playlist to prevent downloading entire playlists
-        command = ["yt-dlp.exe", url, "-o", output_template, "--no-playlist"]
+        if is_image_format:
+            # For image formats, download thumbnail only
+            file_extension = format_type.lower()
+            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
+            
+            # Download thumbnail and convert to requested format
+            command = [
+                "yt-dlp.exe", url, 
+                "--write-thumbnail", 
+                "--skip-download",  # Don't download video
+                "--convert-thumbnails", file_extension,
+                "-o", output_template,
+                "--no-playlist"
+            ]
+            print(f"Download mode: Thumbnail ({file_extension.upper()})")
+        else:
+            # For video/audio formats, use the requested format type
+            file_extension = format_type.lower()
+            
+            # Output template - use explicit extension to prevent file type issues
+            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
+            
+            # Base command with --no-playlist to prevent downloading entire playlists
+            command = ["yt-dlp.exe", url, "-o", output_template, "--no-playlist"]
 
-        if format_type == "mp3":
-            # For MP3, extract audio only with quality setting
+        # Audio formats handling
+        if format_type in ["mp3", "m4a", "flac"]:
+            # For audio formats, extract audio only with quality setting
             command += [
                 "-x", 
-                "--audio-format", "mp3",
+                "--audio-format", format_type,
                 "--audio-quality", f"{quality}k" if quality else "192",
                 "--embed-thumbnail",
                 "--add-metadata"
             ]
-            print(f"Download mode: Audio (MP3) - Quality: {quality if quality else 192}kbps")
-        elif format_type == "mp4":
-            # For MP4, prefer MP4 container formats to avoid audio issues
+            print(f"Download mode: Audio ({format_type.upper()}) - Quality: {quality if quality else 192}kbps")
+        
+        # Video formats handling
+        elif format_type in ["mp4", "webm", "mkv"] and not is_image_format:
             if quality:
-                # Get best video at requested quality + best audio in MP4/M4A formats
-                format_string = f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
-                command += ["-f", format_string, "--merge-output-format", "mp4", "--recode-video", "mp4"]
-                print(f"Download mode: Video (MP4) - Quality: {quality}p with audio (ffmpeg)")
+                # Get best video at requested quality + best audio
+                if format_type == "webm":
+                    # For WEBM, prefer VP9/VP8 video codec + opus/vorbis audio
+                    format_string = f"bestvideo[height<={quality}][ext=webm]+bestaudio[ext=webm]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                    command += ["-f", format_string, "--merge-output-format", "webm"]
+                    print(f"Download mode: Video (WEBM) - Quality: {quality}p with audio")
+                elif format_type == "mkv":
+                    # For MKV, get best available (MKV supports any codec)
+                    format_string = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                    command += ["-f", format_string, "--merge-output-format", "mkv"]
+                    print(f"Download mode: Video (MKV) - Quality: {quality}p with audio")
+                else:  # mp4
+                    # For MP4, prefer MP4 container formats to avoid audio issues
+                    format_string = f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                    command += ["-f", format_string, "--merge-output-format", "mp4", "--recode-video", "mp4"]
+                    print(f"Download mode: Video (MP4) - Quality: {quality}p with audio")
             else:
                 # If no quality specified, get best
-                command += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "--merge-output-format", "mp4", "--recode-video", "mp4"]
-                print("Download mode: Video (MP4) - Best quality with audio (ffmpeg)")
+                if format_type == "webm":
+                    command += ["-f", "bestvideo[ext=webm]+bestaudio[ext=webm]/bestvideo+bestaudio/best", "--merge-output-format", "webm"]
+                    print("Download mode: Video (WEBM) - Best quality with audio")
+                elif format_type == "mkv":
+                    command += ["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mkv"]
+                    print("Download mode: Video (MKV) - Best quality with audio")
+                else:  # mp4
+                    command += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "--merge-output-format", "mp4", "--recode-video", "mp4"]
+                    print("Download mode: Video (MP4) - Best quality with audio")
 
         # Start download in background thread
         download_thread = threading.Thread(
@@ -459,6 +511,74 @@ def video_info():
         # Extract basic metadata only (no sensitive stats)
         uploader = video_data.get("uploader") or video_data.get("channel") or video_data.get("creator") or "Unknown Creator"
         
+        # SMART FORMAT DETECTION
+        # Analyze what formats are actually available
+        formats = video_data.get("formats", [])
+        extractor = video_data.get("extractor", "").lower()
+        extractor_key = video_data.get("extractor_key", "").lower()
+        
+        # Check for video streams
+        has_video = False
+        has_audio = False
+        
+        for fmt in formats:
+            vcodec = fmt.get("vcodec", "none")
+            acodec = fmt.get("acodec", "none")
+            
+            if vcodec and vcodec != "none":
+                has_video = True
+            if acodec and acodec != "none":
+                has_audio = True
+        
+        # Determine media type and available download options
+        # Audio-only platforms
+        audio_only_platforms = [
+            "soundcloud", "bandcamp", "mixcloud", "audiomack", 
+            "music.youtube", "spotify", "applemusic", "deezer"
+        ]
+        
+        # Video platforms (always treat as video even if detection is unclear)
+        video_platforms = [
+            "youtube", "tiktok", "instagram", "snapchat", "twitter", 
+            "vimeo", "dailymotion", "twitch", "facebook"
+        ]
+        
+        is_audio_platform = any(platform in extractor or platform in extractor_key for platform in audio_only_platforms)
+        is_video_platform = any(platform in extractor or platform in extractor_key for platform in video_platforms)
+        
+        # If it's a known video platform, treat as video
+        if is_video_platform:
+            media_type = "video"
+            available_formats = {
+                "video": True,
+                "audio": True,
+                "image": bool(video_data.get("thumbnail"))
+            }
+        # If it's an audio platform or has no video, it's audio-only
+        elif is_audio_platform or (has_audio and not has_video):
+            media_type = "audio"
+            available_formats = {
+                "video": False,
+                "audio": True,
+                "image": bool(video_data.get("thumbnail"))
+            }
+        # If it has video (with or without audio), it's a video
+        elif has_video:
+            media_type = "video"
+            available_formats = {
+                "video": True,
+                "audio": True,  # Most videos have audio or can extract it
+                "image": bool(video_data.get("thumbnail"))
+            }
+        # Image-only (rare case)
+        else:
+            media_type = "image"
+            available_formats = {
+                "video": False,
+                "audio": False,
+                "image": bool(video_data.get("thumbnail"))
+            }
+        
         # Extract music/audio metadata if available
         track = video_data.get("track") or video_data.get("alt_title")
         artist = video_data.get("artist") or video_data.get("creator")
@@ -499,7 +619,10 @@ def video_info():
             "height": height,
             "orientation": orientation,
             "uploader": uploader,
-            "music": music_info
+            "music": music_info,
+            "mediaType": media_type,
+            "availableFormats": available_formats,
+            "extractor": extractor
         }
         
         # Cache the result
@@ -512,6 +635,9 @@ def video_info():
         print(f"Orientation: {orientation}")
         print(f"Has thumbnail: {info['hasThumbnail']}")
         print(f"Thumbnail: {local_thumbnail[:60] if len(local_thumbnail) > 60 else local_thumbnail}")
+        print(f"🎯 Media Type: {media_type}")
+        print(f"📋 Available Formats: Video={available_formats['video']}, Audio={available_formats['audio']}, Image={available_formats['image']}")
+        print(f"🔧 Extractor: {extractor}")
         if music_info:
             print(f"🎵 Music Detected: {music_info.get('track', 'Unknown')} by {music_info.get('artist', 'Unknown')}")
         else:

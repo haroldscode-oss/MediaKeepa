@@ -238,8 +238,8 @@
     --color-fg-secondary: var(--color-neutral-a11);
 
     /* Background colors */
-    --color-bg: #ffffff;
-    --color-bg-inset: var(--color-neutral-2);
+    --color-bg: var(--color-neutral-2);
+    --color-bg-inset: #f8f9fa;
     --color-bg-overlay: #ffffff;
 
     /* Focus ring */

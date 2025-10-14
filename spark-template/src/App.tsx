@@ -21,9 +21,16 @@ type VideoInfo = {
   thumbnail: string
   duration: string
   channel: string
+  mediaType?: "video" | "audio" | "image"
+  availableFormats?: {
+    video: boolean
+    audio: boolean
+    image: boolean
+  }
+  extractor?: string
 }
 
-type FormatType = "mp4" | "webm" | "mkv" | "mov" | "mp3" | "m4a" | "wav" | "flac" | "jpg" | "png" | "webp" | "gif"
+type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
 type Quality = "1080p" | "720p" | "480p"
 type Bitrate = "320kbps" | "192kbps" | "128kbps"
 
@@ -47,10 +54,15 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null)
   const [downloadComplete, setDownloadComplete] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [availableTabs, setAvailableTabs] = useState({
+    video: true,
+    audio: true,
+    image: true
+  })
 
-  const videoFormats: FormatType[] = ["mp4", "webm", "mkv", "mov"]
-  const audioFormats: FormatType[] = ["mp3", "m4a", "wav", "flac"]
-  const imageFormats: FormatType[] = ["jpg", "png", "webp", "gif"]
+  const videoFormats: FormatType[] = ["mp4", "webm", "mkv"]
+  const audioFormats: FormatType[] = ["mp3", "m4a", "flac"]
+  const imageFormats: FormatType[] = ["jpg", "png", "webp"]
 
   const qualities: Quality[] = ["1080p", "720p", "480p"]
   const bitrates: Bitrate[] = ["320kbps", "192kbps", "128kbps"]
@@ -91,6 +103,17 @@ function App() {
         throw new Error(data.message || 'Failed to fetch video information')
       }
 
+      // Update available tabs based on backend detection
+      if (data.availableFormats) {
+        setAvailableTabs({
+          video: data.availableFormats.video || false,
+          audio: data.availableFormats.audio || false,
+          image: data.availableFormats.image || false
+        })
+        console.log('📋 Available tabs:', data.availableFormats)
+        console.log('🎯 Media type:', data.mediaType)
+      }
+
       // Flask backend returns the data directly (not nested in data.data)
       setVideoInfo({
         title: data.title || 'Untitled Video',
@@ -101,6 +124,9 @@ function App() {
           : (data.thumbnail || 'https://via.placeholder.com/800x450'),
         duration: data.duration || 'Unknown',
         channel: data.uploader || 'Unknown',
+        mediaType: data.mediaType,
+        availableFormats: data.availableFormats,
+        extractor: data.extractor
       })
 
       console.log('Video info loaded successfully:', data.title)
@@ -314,10 +340,10 @@ function App() {
         >
           <div className="space-y-4">
             <div className="relative">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center">
                 <WebsiteIcon 
                   url={url} 
-                  className="w-5 h-5 text-muted-foreground transition-colors duration-200"
+                  className="w-5 h-5 text-muted-foreground transition-colors duration-200 flex-shrink-0"
                 />
               </div>
               <Input
@@ -376,15 +402,29 @@ function App() {
                   </div>
                 </Card>
 
-                <Tabs defaultValue="video" className="w-full">
+                <Tabs 
+                  defaultValue={
+                    availableTabs.video ? "video" : 
+                    availableTabs.audio ? "audio" : 
+                    availableTabs.image ? "image" : 
+                    "video"
+                  } 
+                  className="w-full"
+                >
                   <TabsList className="grid w-full grid-cols-3 h-12">
-                    <TabsTrigger value="video" className="text-sm font-medium">Video</TabsTrigger>
-                    <TabsTrigger value="audio" className="text-sm font-medium">Audio</TabsTrigger>
-                    <TabsTrigger value="image" className="text-sm font-medium">Image</TabsTrigger>
+                    {availableTabs.video && (
+                      <TabsTrigger value="video" className="text-sm font-medium">Video</TabsTrigger>
+                    )}
+                    {availableTabs.audio && (
+                      <TabsTrigger value="audio" className="text-sm font-medium">Audio</TabsTrigger>
+                    )}
+                    {availableTabs.image && (
+                      <TabsTrigger value="image" className="text-sm font-medium">Image</TabsTrigger>
+                    )}
                   </TabsList>
 
                   <TabsContent value="video" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
                       {videoFormats.map((format) => (
                         <FormatOption
                           key={format}
@@ -423,7 +463,7 @@ function App() {
                   </TabsContent>
 
                   <TabsContent value="audio" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
                       {audioFormats.map((format) => (
                         <FormatOption
                           key={format}
@@ -462,7 +502,7 @@ function App() {
                   </TabsContent>
 
                   <TabsContent value="image" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
                       {imageFormats.map((format) => (
                         <FormatOption
                           key={format}
