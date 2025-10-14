@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
+from flask_cors import CORS
 import subprocess
 import os
 import webbrowser
@@ -13,6 +14,7 @@ import hashlib
 import threading
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
 video_cache = {}
@@ -20,6 +22,51 @@ CACHE_DURATION = 3600  # 1 hour in seconds
 
 # In-memory storage for download progress tracking
 download_progress = {}
+
+# Cleanup configuration
+CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
+FILE_MAX_AGE = 600  # Delete files older than 10 minutes
+
+def cleanup_old_files():
+    """
+    Periodically clean up old files from temp_downloads folder
+    Runs in a background thread
+    """
+    while True:
+        try:
+            time.sleep(CLEANUP_INTERVAL)
+            
+            if not os.path.exists(temp_downloads_path):
+                continue
+            
+            current_time = time.time()
+            files_cleaned = 0
+            
+            # Get all files in temp_downloads
+            for filename in os.listdir(temp_downloads_path):
+                file_path = os.path.join(temp_downloads_path, filename)
+                
+                # Skip if not a file
+                if not os.path.isfile(file_path):
+                    continue
+                
+                # Check file age
+                file_age = current_time - os.path.getmtime(file_path)
+                
+                # Delete if older than max age
+                if file_age > FILE_MAX_AGE:
+                    try:
+                        os.remove(file_path)
+                        files_cleaned += 1
+                        print(f"🗑️  Auto-cleanup: Removed old file {filename} (age: {int(file_age)}s)")
+                    except Exception as e:
+                        print(f"⚠️  Auto-cleanup failed for {filename}: {e}")
+            
+            if files_cleaned > 0:
+                print(f"✨ Auto-cleanup completed: {files_cleaned} file(s) removed")
+                
+        except Exception as e:
+            print(f"❌ Error in cleanup thread: {e}")
 
 def sanitize_filename(filename):
     """
@@ -60,6 +107,16 @@ temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
 # Create temp folder if it doesn't exist
 if not os.path.exists(temp_downloads_path):
     os.makedirs(temp_downloads_path)
+else:
+    # Clean up any leftover files from previous runs on startup
+    try:
+        for filename in os.listdir(temp_downloads_path):
+            file_path = os.path.join(temp_downloads_path, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        print("🧹 Startup cleanup: Cleared temp_downloads folder")
+    except Exception as e:
+        print(f"⚠️  Startup cleanup warning: {e}")
 
 def perform_download(session_id, url, format_type, quality, output_template, command):
     """
@@ -154,15 +211,38 @@ def perform_download(session_id, url, format_type, quality, output_template, com
         download_progress[session_id]['message'] = 'Download complete!'
         download_progress[session_id]['filename'] = sanitized_filename
         
+        # Clean up progress data after 5 minutes (user should have downloaded by then)
+        def cleanup_progress():
+            time.sleep(300)  # Wait 5 minutes
+            if session_id in download_progress:
+                del download_progress[session_id]
+                print(f"🗑️  Cleaned up progress data for session: {session_id}")
+        
+        threading.Thread(target=cleanup_progress, daemon=True).start()
+        
     except Exception as e:
         print(f"ERROR in download thread: {str(e)}")
         download_progress[session_id]['status'] = 'error'
         download_progress[session_id]['message'] = str(e)
         download_progress[session_id]['progress'] = 0
+        
+        # Clean up error progress data after 1 minute
+        def cleanup_error_progress():
+            time.sleep(60)
+            if session_id in download_progress:
+                del download_progress[session_id]
+                print(f"🗑️  Cleaned up error progress data for session: {session_id}")
+        
+        threading.Thread(target=cleanup_error_progress, daemon=True).start()
 
 @app.route("/")
 def serve_index():
     return send_from_directory('.', 'index.html')
+
+@app.route("/sw.js")
+def serve_service_worker():
+    """Serve the Monetag service worker file"""
+    return send_from_directory('.', 'sw.js', mimetype='application/javascript')
 
 @app.route("/ping")
 def ping():
@@ -524,6 +604,8 @@ def get_file(filename):
         if not os.path.exists(file_path):
             return jsonify({"status": "error", "message": "File not found"}), 404
         
+        print(f"📤 Sending file to user: {filename}")
+        
         # Send file to user's browser
         response = send_file(
             file_path,
@@ -537,11 +619,13 @@ def get_file(filename):
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-            except:
-                pass
+                    print(f"🗑️  Cleaned up file: {filename}")
+            except Exception as e:
+                print(f"⚠️  Failed to cleanup {filename}: {e}")
         
         return response
     except Exception as e:
+        print(f"❌ Error serving file {filename}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/stream-video/<session_id>")
@@ -727,4 +811,9 @@ def proxy_video():
         }), 500
 
 if __name__ == "__main__":
+    # Start cleanup thread for automatic file deletion
+    cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
+    cleanup_thread.start()
+    print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
+    
     app.run(debug=False)

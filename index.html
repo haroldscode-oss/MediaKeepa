@@ -3,9 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="monetag" content="c875848943c2c2d9a646fd519427a993">
     <title>Drop Valley - Premium Downloader</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- ============================================ -->
+    <!-- PROPELLERADS INITIALIZATION SCRIPT -->
+    <!-- ============================================ -->
+    <!-- INSTRUCTIONS: 
+         1. Sign up at propellerads.com
+         2. Add your website to PropellerAds dashboard
+         3. Copy your Site ID from the dashboard
+         4. Replace 'YOUR_PROPELLER_SITE_ID' below with your actual Site ID
+    -->
+    <!-- PASTE YOUR PROPELLERADS SITE SCRIPT HERE -->
+    <!-- Example format: <script>(function(d,z,s){...})(document,0,'script');</script> -->
+    <!-- PROPELLER_SITE_SCRIPT_HERE -->
+    
+    <!-- ============================================ -->
+    <!-- ADSTERRA INITIALIZATION SCRIPT (OPTIONAL) -->
+    <!-- ============================================ -->
+    <!-- INSTRUCTIONS:
+         1. Sign up at adsterra.com
+         2. Add your website to Adsterra dashboard
+         3. If Adsterra provides a site verification script, paste it here
+    -->
+    <!-- ADSTERRA_SITE_SCRIPT_HERE -->
+    
     <style>
         :root {
             --primary-color: #6d28d9;
@@ -1537,6 +1562,20 @@
             </p>
         </div>
         
+        <!-- ============================================ -->
+        <!-- PROPELLERADS TOP BANNER AD -->
+        <!-- ============================================ -->
+        <!-- INSTRUCTIONS:
+             1. Go to PropellerAds dashboard
+             2. Create a new "Banner" ad zone (728x90 or 320x50)
+             3. Copy the banner ad code
+             4. Paste it below, replacing this comment
+        -->
+        <div id="propeller-top-banner" style="text-align: center; margin: 20px auto; max-width: 728px;">
+            <!-- PROPELLER_BANNER_CODE_HERE -->
+            <!-- Example: <script async="async" data-cfasync="false" src="//pl123456.profitablegatecpm.com/..."></script> -->
+        </div>
+        
         <div class="download-container">
             <div class="url-input-container">
                 <i class="fas fa-link url-icon"></i>
@@ -1674,6 +1713,13 @@
                 <i class="fas fa-sync-alt"></i>
                 <span>Download Another Video</span>
             </button>
+
+            <!-- Adsterra Native Ad Below Video Preview -->
+            <div id="adsterra-native-ad" style="margin: 30px auto; max-width: 750px;">
+                <!-- ADSTERRA_NATIVE_AD_CODE_HERE -->
+                <!-- Paste your Adsterra native ad code from dashboard here -->
+                <!-- Format: Native Banner (750x100 or 750x200) -->
+            </div>
             
             <div class="ad-container" id="adContainer">
                 <p class="ad-message">
@@ -1948,7 +1994,7 @@
                 playButtonOverlay.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                 
                 // Get stream session from server
-                const response = await fetch('http://127.0.0.1:5000/get-stream-session', {
+                const response = await fetch('/get-stream-session', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1964,7 +2010,7 @@
                     playButtonOverlay.style.display = 'none';
                     
                     // Create stream URL with session ID
-                    const streamUrl = `http://127.0.0.1:5000/stream-video/${data.sessionId}?url=${encodeURIComponent(currentVideoUrl)}`;
+                    const streamUrl = `/stream-video/${data.sessionId}?url=${encodeURIComponent(currentVideoUrl)}`;
                     
                     // Load video stream
                     videoPlayer.src = streamUrl;
@@ -2396,6 +2442,18 @@
         downloadBtn.addEventListener('click', () => {
             const url = urlInput.value.trim();
             
+            // ============================================
+            // PROPELLERADS POP-UNDER TRIGGER
+            // ============================================
+            // After signing up at PropellerAds, you'll get a pop-under ad code.
+            // Add the trigger here - it will open the ad in a new window behind the main window.
+            // Example format:
+            // if (typeof window.propellerads !== 'undefined') {
+            //     window.propellerads.triggerPopunder();
+            // }
+            // The user won't be interrupted - the ad opens in the background
+            // ============================================
+            
             if (!url) {
                 errorMessage.textContent = 'Please enter a URL';
                 errorMessage.style.display = 'block';
@@ -2434,65 +2492,83 @@
             watchAdBtn.disabled = true;
             watchAdBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
             
+            // ============================================
+            // PROPELLERADS INTERSTITIAL AD TRIGGER
+            // ============================================
+            // After signing up at PropellerAds, you'll get an interstitial ad code.
+            // Replace the setTimeout below with your PropellerAds interstitial trigger.
+            // Example format:
+            // if (typeof window.propellerads !== 'undefined') {
+            //     window.propellerads.showInterstitial();
+            // }
+            // The ad will show, and when user closes it, call proceedWithDownload()
+            // For now, using setTimeout to simulate the ad delay
+            // ============================================
+            
             setTimeout(async () => {
-                console.log('Starting download process...');
-                console.log('URL:', urlInput.value.trim());
-                console.log('Format:', selectedFormat);
-                console.log('Quality:', selectedQuality);
-                
-                watchAdBtn.innerHTML = '<i class="fas fa-check"></i> Ad Completed';
-                adContainer.classList.remove('active');
-                downloadText.textContent = 'Starting download...';
-                loadingSpinner.style.display = 'block';
-                
-                try {
-                    // Start the download
-                    console.log('Sending fetch request to /download...');
-                    const response = await fetch('/download', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            url: urlInput.value.trim(),
-                            format: selectedFormat,
-                            quality: selectedQuality
-                        })
-                    });
-                    
-                    console.log('Response received:', response);
-                    
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.message || `Server error: ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    console.log('Response data:', data);
-                    
-                    if (data.status === 'started' && data.session_id) {
-                        // Download started, now poll for progress
-                        console.log('Download started, session ID:', data.session_id);
-                        await pollDownloadProgress(data.session_id);
-                    } else {
-                        throw new Error(data.message || 'Failed to start download');
-                    }
-                    
-                } catch (err) {
-                    console.error('Download error:', err);
-                    downloadText.textContent = 'Error';
-                    loadingSpinner.style.display = 'none';
-                    progressBar.style.width = '0%';
-                    errorMessage.textContent = err.message || 'Download failed. Please try again.';
-                    errorMessage.style.display = 'block';
-                } finally {
-                    // Reset ad button
-                    setTimeout(() => {
-                        watchAdBtn.disabled = false;
-                        watchAdBtn.innerHTML = '<i class="fas fa-eye"></i><span>Watch Ad</span>';
-                        downloadBtn.disabled = false;
-                    }, 2000);
-                }
+                await proceedWithDownload();
             }, 2000);
         });
+        
+        // Extracted download logic into separate function for cleaner ad integration
+        async function proceedWithDownload() {
+            console.log('Starting download process...');
+            console.log('URL:', urlInput.value.trim());
+            console.log('Format:', selectedFormat);
+            console.log('Quality:', selectedQuality);
+            
+            watchAdBtn.innerHTML = '<i class="fas fa-check"></i> Ad Completed';
+            adContainer.classList.remove('active');
+            downloadText.textContent = 'Starting download...';
+            loadingSpinner.style.display = 'block';
+            
+            try {
+                // Start the download
+                console.log('Sending fetch request to /download...');
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: urlInput.value.trim(),
+                        format: selectedFormat,
+                        quality: selectedQuality
+                    })
+                });
+                
+                console.log('Response received:', response);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (data.status === 'started' && data.session_id) {
+                    // Download started, now poll for progress
+                    console.log('Download started, session ID:', data.session_id);
+                    await pollDownloadProgress(data.session_id);
+                } else {
+                    throw new Error(data.message || 'Failed to start download');
+                }
+                
+            } catch (err) {
+                console.error('Download error:', err);
+                downloadText.textContent = 'Error';
+                loadingSpinner.style.display = 'none';
+                progressBar.style.width = '0%';
+                errorMessage.textContent = err.message || 'Download failed. Please try again.';
+                errorMessage.style.display = 'block';
+            } finally {
+                // Reset ad button
+                setTimeout(() => {
+                    watchAdBtn.disabled = false;
+                    watchAdBtn.innerHTML = '<i class="fas fa-eye"></i><span>Watch Ad</span>';
+                    downloadBtn.disabled = false;
+                }, 2000);
+            }
+        }
         
         // Download another button functionality
         downloadAnotherBtn.addEventListener('click', () => {
@@ -2516,7 +2592,29 @@
         featureCards.forEach(card => {
             observer.observe(card);
         });
+
+        // ============================================
+        // MONETAG SERVICE WORKER REGISTRATION
+        // ============================================
+        // This registers the Monetag sw.js file for push notifications and pop-under ads
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                .then(function(registration) {
+                    console.log('✅ Monetag Service Worker registered successfully:', registration);
+                })
+                .catch(function(error) {
+                    console.error('❌ Monetag Service Worker registration failed:', error);
+                });
+        }
     </script>
+
+    <!-- Adsterra Social Bar (Sticky Footer) -->
+    <div id="adsterra-social-bar">
+        <!-- ADSTERRA_SOCIAL_BAR_CODE_HERE -->
+        <!-- Paste your Adsterra social bar code from dashboard here -->
+        <!-- Format: Social Bar (sticky footer ad) -->
+    </div>
+
 </body>
 </html>
 
