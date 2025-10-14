@@ -167,6 +167,11 @@ def perform_download(session_id, url, format_type, quality, output_template, com
         
         print(f"Download completed successfully!")
         
+        # Update progress to show we're processing the file
+        download_progress[session_id]['status'] = 'processing'
+        download_progress[session_id]['progress'] = 100
+        download_progress[session_id]['message'] = 'Processing file...'
+        
         # Set explicit extension based on format type
         file_extension = "mp3" if format_type == "mp3" else "mp4"
         
@@ -816,4 +821,4 @@ if __name__ == "__main__":
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
     
-    app.run(debug=False)
+    app.run(debug=False, port=8000)
