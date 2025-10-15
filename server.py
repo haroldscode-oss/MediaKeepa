@@ -14,10 +14,7 @@ from functools import lru_cache
 import hashlib
 import threading
 
-# Path to the frontend build folder
-DIST_FOLDER = os.path.join(os.path.dirname(__file__), 'spark-template', 'dist')
-
-app = Flask(__name__, static_folder=DIST_FOLDER, static_url_path='')
+app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
@@ -101,6 +98,56 @@ def sanitize_filename(filename):
         name = "video"
     
     return name + ext
+
+
+def extract_audio_bitrate_kbps(fmt):
+    """Best-effort extraction of an audio track's bitrate in kbps from a yt-dlp format entry."""
+
+    def to_float(value):
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            value = value.strip().lower().replace("kbps", "").replace("kb", "")
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    # Direct numeric fields exposed by yt-dlp
+    for key in ("abr", "audio_bitrate"):
+        bitrate = to_float(fmt.get(key))
+        if bitrate and bitrate > 0:
+            return bitrate
+
+    # Some formats expose the bitrate in textual descriptors like format_id or format_note
+    for field in ("format_id", "format", "format_note"):
+        text = fmt.get(field)
+        if not isinstance(text, str):
+            continue
+        lower_text = text.lower()
+
+        match = re.search(r"(\d{2,3})\s*(?:kbps|k)\b", lower_text)
+        if match:
+            return float(match.group(1))
+
+        match = re.search(r"(\d{2,3})000\b", text)
+        if match:
+            return float(match.group(1))
+
+    # As a last resort, fall back to total bitrate (tbr) when the stream is audio-only
+    tbr = to_float(fmt.get("tbr"))
+    if tbr and tbr > 0:
+        vcodec = (fmt.get("vcodec") or "").lower()
+        video_ext = (fmt.get("video_ext") or "").lower()
+        height = fmt.get("height")
+
+        if vcodec in ("none", "") and video_ext in ("none", ""):
+            return tbr
+        if (vcodec in ("none", "") or video_ext in ("none", "")) and not height:
+            return tbr
+
+    return None
 
 # Automatically open browser on server start
 webbrowser.open("http://127.0.0.1:5000")
@@ -269,12 +316,12 @@ def perform_download(session_id, url, format_type, quality, output_template, com
 
 @app.route("/")
 def serve_index():
-    return send_from_directory(DIST_FOLDER, 'index.html')
+    return send_from_directory('.', 'index.html')
 
 @app.route("/sw.js")
 def serve_service_worker():
     """Serve the Monetag service worker file"""
-    return send_from_directory(DIST_FOLDER, 'sw.js', mimetype='application/javascript')
+    return send_from_directory('.', 'sw.js', mimetype='application/javascript')
 
 @app.route("/ping")
 def ping():
@@ -614,7 +661,7 @@ def video_info():
             vcodec = fmt.get("vcodec", "none")
             acodec = fmt.get("acodec", "none")
             height = fmt.get("height")
-            abr = fmt.get("abr")  # Audio bitrate in kbps
+            bitrate_kbps = extract_audio_bitrate_kbps(fmt)
             
             if vcodec and vcodec != "none":
                 has_video = True
@@ -643,18 +690,18 @@ def video_info():
             if acodec and acodec != "none":
                 has_audio = True
                 # Collect audio bitrates
-                if abr:
-                    if abr >= 320:
+                if bitrate_kbps and bitrate_kbps > 0:
+                    if bitrate_kbps >= 320:
                         available_bitrates.add("320kbps")
-                    elif abr >= 256:
+                    elif bitrate_kbps >= 256:
                         available_bitrates.add("256kbps")
-                    elif abr >= 192:
+                    elif bitrate_kbps >= 192:
                         available_bitrates.add("192kbps")
-                    elif abr >= 160:
+                    elif bitrate_kbps >= 160:
                         available_bitrates.add("160kbps")
-                    elif abr >= 128:
+                    elif bitrate_kbps >= 128:
                         available_bitrates.add("128kbps")
-                    elif abr >= 96:
+                    elif bitrate_kbps >= 96:
                         available_bitrates.add("96kbps")
                     else:
                         available_bitrates.add("64kbps")
@@ -1087,4 +1134,4 @@ if __name__ == "__main__":
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
     
-    app.run(debug=False, port=5000)
+    app.run(debug=False, port=8000)
