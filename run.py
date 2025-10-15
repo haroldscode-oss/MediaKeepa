@@ -15,7 +15,7 @@ import requests
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "spark-template"
 DIST_DIR = FRONTEND_DIR / "dist"
-DEFAULT_URL = "http://127.0.0.1:5000"
+DEFAULT_URL = "http://localhost:5000"
 PING_URL = f"{DEFAULT_URL}/ping"
 
 

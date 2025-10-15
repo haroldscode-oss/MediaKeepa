@@ -8,7 +8,7 @@ A powerful media downloader supporting video, audio, and image downloads from va
 ```powershell
 python run.py
 ```
-The launcher will build the React frontend if needed and start the Flask API + UI on `http://127.0.0.1:5000`.
+The launcher will build the React frontend if needed and start the Flask API + UI on `http://localhost:5000`.
 
 ### Stop MediaKeepa
 Press `Ctrl + C` in the terminal running `python run.py`.
@@ -38,4 +38,4 @@ Dropvalley/
 
 ## 📝 Development
 
-Everything now runs on a single origin (`http://127.0.0.1:5000`). The launcher rebuilds the frontend when source files change, so you can focus on development without juggling multiple servers.
+Everything now runs on a single origin (`http://localhost:5000`). The launcher rebuilds the frontend when source files change, so you can focus on development without juggling multiple servers.
