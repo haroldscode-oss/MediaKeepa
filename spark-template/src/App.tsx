@@ -31,8 +31,8 @@ type VideoInfo = {
 }
 
 type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
-type Quality = "1080p" | "720p" | "480p"
-type Bitrate = "320kbps" | "192kbps" | "128kbps"
+type Quality = "8K" | "4K" | "2K" | "1440p" | "1080p" | "720p" | "480p" | "360p" | "240p" | "144p"
+type Bitrate = "320kbps" | "256kbps" | "192kbps" | "160kbps" | "128kbps" | "96kbps" | "64kbps"
 
 type DownloadProgress = {
   percentage: number
@@ -64,8 +64,8 @@ function App() {
   const audioFormats: FormatType[] = ["mp3", "m4a", "flac"]
   const imageFormats: FormatType[] = ["jpg", "png", "webp"]
 
-  const qualities: Quality[] = ["1080p", "720p", "480p"]
-  const bitrates: Bitrate[] = ["320kbps", "192kbps", "128kbps"]
+  const qualities: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
+  const bitrates: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
 
   useEffect(() => {
     if (url.length > 10) {
@@ -108,7 +108,7 @@ function App() {
 
       // Flask backend returns { status: "success", title: "...", thumbnail: "...", ... }
       if (!response.ok || data.status !== 'success') {
-        throw new Error(data.message || 'Failed to fetch video information')
+        throw new Error(data.message || 'Failed to fetch media information')
       }
 
       // Update available tabs based on backend detection
@@ -140,8 +140,8 @@ function App() {
       console.log('Video info loaded successfully:', data.title)
     } catch (err) {
       console.error('Error fetching video info:', err)
-      setError(err instanceof Error ? err.message : "Failed to fetch video information. Please check the URL and try again.")
-      toast.error("Failed to fetch video information")
+      setError(err instanceof Error ? err.message : "Failed to fetch media information. Please check the URL and try again.")
+      toast.error("Failed to fetch media information")
       setVideoInfo(null)
     } finally {
       setIsLoading(false)
@@ -385,7 +385,7 @@ function App() {
                 exit={{ opacity: 0 }}
                 className="flex justify-center py-12"
               >
-                <ShimmerText text="Fetching video information..." />
+                <ShimmerText text="Fetching media information..." />
               </motion.div>
             )}
 
