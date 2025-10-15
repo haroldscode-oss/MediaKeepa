@@ -503,7 +503,7 @@ def video_info():
             print(f"ERROR: yt-dlp failed: {result.stderr}")
             return jsonify({
                 "status": "error",
-                "message": "Failed to fetch video info"
+                "message": "Failed to fetch media info"
             }), 500
         
         # Parse JSON output
@@ -601,18 +601,67 @@ def video_info():
         extractor = video_data.get("extractor", "").lower()
         extractor_key = video_data.get("extractor_key", "").lower()
         
-        # Check for video streams
+        # Check for video streams and collect available qualities
         has_video = False
         has_audio = False
+        available_qualities = set()
+        available_bitrates = set()
         
         for fmt in formats:
             vcodec = fmt.get("vcodec", "none")
             acodec = fmt.get("acodec", "none")
+            height = fmt.get("height")
+            abr = fmt.get("abr")  # Audio bitrate in kbps
             
             if vcodec and vcodec != "none":
                 has_video = True
+                # Collect video qualities
+                if height:
+                    if height >= 4320:
+                        available_qualities.add("8K")
+                    elif height >= 2160:
+                        available_qualities.add("4K")
+                    elif height >= 1440:
+                        available_qualities.add("2K")
+                        available_qualities.add("1440p")
+                    elif height >= 1080:
+                        available_qualities.add("1080p")
+                    elif height >= 720:
+                        available_qualities.add("720p")
+                    elif height >= 480:
+                        available_qualities.add("480p")
+                    elif height >= 360:
+                        available_qualities.add("360p")
+                    elif height >= 240:
+                        available_qualities.add("240p")
+                    else:
+                        available_qualities.add("144p")
+            
             if acodec and acodec != "none":
                 has_audio = True
+                # Collect audio bitrates
+                if abr:
+                    if abr >= 320:
+                        available_bitrates.add("320kbps")
+                    elif abr >= 256:
+                        available_bitrates.add("256kbps")
+                    elif abr >= 192:
+                        available_bitrates.add("192kbps")
+                    elif abr >= 160:
+                        available_bitrates.add("160kbps")
+                    elif abr >= 128:
+                        available_bitrates.add("128kbps")
+                    elif abr >= 96:
+                        available_bitrates.add("96kbps")
+                    else:
+                        available_bitrates.add("64kbps")
+        
+        # Convert sets to sorted lists
+        quality_order = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
+        available_qualities = [q for q in quality_order if q in available_qualities]
+        
+        bitrate_order = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
+        available_bitrates = [b for b in bitrate_order if b in available_bitrates]
         
         # Determine media type and available download options
         # Audio-only platforms
@@ -706,6 +755,8 @@ def video_info():
             "music": music_info,
             "mediaType": media_type,
             "availableFormats": available_formats,
+            "availableQualities": available_qualities,
+            "availableBitrates": available_bitrates,
             "extractor": extractor
         }
         
@@ -721,6 +772,8 @@ def video_info():
         print(f"Thumbnail: {local_thumbnail[:60] if len(local_thumbnail) > 60 else local_thumbnail}")
         print(f"🎯 Media Type: {media_type}")
         print(f"📋 Available Formats: Video={available_formats['video']}, Audio={available_formats['audio']}, Image={available_formats['image']}")
+        print(f"🎬 Available Qualities: {', '.join(available_qualities) if available_qualities else 'None detected'}")
+        print(f"🎵 Available Bitrates: {', '.join(available_bitrates) if available_bitrates else 'None detected'}")
         print(f"🔧 Extractor: {extractor}")
         if music_info:
             print(f"🎵 Music Detected: {music_info.get('track', 'Unknown')} by {music_info.get('artist', 'Unknown')}")

@@ -27,6 +27,8 @@ type VideoInfo = {
     audio: boolean
     image: boolean
   }
+  availableQualities?: Quality[]
+  availableBitrates?: Bitrate[]
   extractor?: string
 }
 
@@ -59,6 +61,8 @@ function App() {
     audio: true,
     image: true
   })
+  const [availableQualities, setAvailableQualities] = useState<Quality[]>(qualities)
+  const [availableBitrates, setAvailableBitrates] = useState<Bitrate[]>(bitrates)
 
   const videoFormats: FormatType[] = ["mp4", "webm", "mkv"]
   const audioFormats: FormatType[] = ["mp3", "m4a", "flac"]
@@ -80,6 +84,9 @@ function App() {
       setSelectedBitrate(null)
       setDownloadComplete(false)
       setDownloadProgress(null)
+      // Reset available qualities and bitrates to defaults
+      setAvailableQualities(qualities)
+      setAvailableBitrates(bitrates)
     }
   }, [url])
 
@@ -122,6 +129,23 @@ function App() {
         console.log('🎯 Media type:', data.mediaType)
       }
 
+      // Update available qualities and bitrates from backend
+      if (data.availableQualities && data.availableQualities.length > 0) {
+        setAvailableQualities(data.availableQualities)
+        console.log('🎬 Available qualities:', data.availableQualities)
+      } else {
+        // Fallback to all qualities if none detected
+        setAvailableQualities(qualities)
+      }
+
+      if (data.availableBitrates && data.availableBitrates.length > 0) {
+        setAvailableBitrates(data.availableBitrates)
+        console.log('🎵 Available bitrates:', data.availableBitrates)
+      } else {
+        // Fallback to all bitrates if none detected
+        setAvailableBitrates(bitrates)
+      }
+
       // Flask backend returns the data directly (not nested in data.data)
       setVideoInfo({
         title: data.title || 'Untitled Video',
@@ -134,6 +158,8 @@ function App() {
         channel: data.uploader || 'Unknown',
         mediaType: data.mediaType,
         availableFormats: data.availableFormats,
+        availableQualities: data.availableQualities,
+        availableBitrates: data.availableBitrates,
         extractor: data.extractor
       })
 
@@ -466,7 +492,7 @@ function App() {
                               <SelectValue placeholder="Select quality" />
                             </SelectTrigger>
                             <SelectContent>
-                              {qualities.map((quality) => (
+                              {availableQualities.map((quality) => (
                                 <SelectItem key={quality} value={quality}>
                                   {quality}
                                 </SelectItem>
@@ -505,7 +531,7 @@ function App() {
                               <SelectValue placeholder="Select bitrate" />
                             </SelectTrigger>
                             <SelectContent>
-                              {bitrates.map((bitrate) => (
+                              {availableBitrates.map((bitrate) => (
                                 <SelectItem key={bitrate} value={bitrate}>
                                   {bitrate}
                                 </SelectItem>
