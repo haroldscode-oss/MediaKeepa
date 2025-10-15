@@ -78,12 +78,20 @@ function App() {
       setSelectedFormat(null)
       setSelectedQuality(null)
       setSelectedBitrate(null)
+      setDownloadComplete(false)
+      setDownloadProgress(null)
     }
   }, [url])
 
   const fetchVideoInfo = async (videoUrl: string) => {
     setIsLoading(true)
     setError("")
+    // Reset download states when fetching new video
+    setDownloadComplete(false)
+    setDownloadProgress(null)
+    setSelectedFormat(null)
+    setSelectedQuality(null)
+    setSelectedBitrate(null)
 
     try {
       console.log('Fetching video info from:', `${API_URL}/video-info`)
@@ -307,16 +315,6 @@ function App() {
     }, 500) // Poll every 500ms
   }
 
-  const handleDownloadAnother = () => {
-    setDownloadComplete(false)
-    setDownloadProgress(null)
-    setSelectedFormat(null)
-    setSelectedQuality(null)
-    setSelectedBitrate(null)
-    setUrl("")
-    setVideoInfo(null)
-  }
-
   const isVideoFormat = selectedFormat && videoFormats.includes(selectedFormat)
   const isAudioFormat = selectedFormat && audioFormats.includes(selectedFormat)
   const isImageFormat = selectedFormat && imageFormats.includes(selectedFormat)
@@ -411,7 +409,11 @@ function App() {
                   } 
                   className="w-full"
                 >
-                  <TabsList className="grid w-full grid-cols-3 h-12">
+                  <TabsList className={`grid w-full h-12 ${
+                    Object.values(availableTabs).filter(Boolean).length === 3 ? 'grid-cols-3' :
+                    Object.values(availableTabs).filter(Boolean).length === 2 ? 'grid-cols-2' :
+                    'grid-cols-1'
+                  }`}>
                     {availableTabs.video && (
                       <TabsTrigger value="video" className="text-sm font-medium">Video</TabsTrigger>
                     )}
@@ -602,7 +604,6 @@ function App() {
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.9 }}
-                      className="space-y-4"
                     >
                       <Card className="p-6 border-2 border-primary/20 bg-primary/5">
                         <div className="flex flex-col items-center text-center space-y-3">
@@ -632,15 +633,6 @@ function App() {
                           </div>
                         </div>
                       </Card>
-
-                      <Button
-                        onClick={handleDownloadAnother}
-                        variant="outline"
-                        className="w-full h-12 text-base font-semibold border-2"
-                        size="lg"
-                      >
-                        Download Another File
-                      </Button>
                     </motion.div>
                   )}
                 </AnimatePresence>

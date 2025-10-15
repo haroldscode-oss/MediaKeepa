@@ -197,16 +197,28 @@ def perform_download(session_id, url, format_type, quality, output_template, com
             download_progress[session_id]['message'] = 'File not found after download'
             download_progress[session_id]['progress'] = 0
             return
+        
+        # For image formats, filter to only get the actual image file (not .webp.part or other temp files)
+        if format_type.lower() in image_formats:
+            # Look for files with the correct extension
+            image_files = [f for f in downloaded_files if f.endswith(f".{file_extension}")]
+            if image_files:
+                original_file = image_files[0]
+            else:
+                # No file with correct extension found, try any file
+                original_file = downloaded_files[0]
+        else:
+            original_file = downloaded_files[0]
             
-        # Get the original filename
-        original_file = downloaded_files[0]
         original_filename = os.path.basename(original_file)
         print(f"Original filename: {original_filename}")
         
         # Ensure the file has the correct extension
         if not original_filename.endswith(f".{file_extension}"):
-            # If the file doesn't have the right extension, add it
-            correct_file = original_file + f".{file_extension}"
+            # If the file doesn't have the right extension, rename it
+            base_name = os.path.splitext(original_filename)[0]
+            correct_filename = f"{base_name}.{file_extension}"
+            correct_file = os.path.join(temp_downloads_path, correct_filename)
             os.rename(original_file, correct_file)
             original_file = correct_file
             original_filename = os.path.basename(correct_file)
@@ -299,16 +311,18 @@ def download():
         if is_image_format:
             # For image formats, download thumbnail only
             file_extension = format_type.lower()
-            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
+            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s")
             
             # Download thumbnail and convert to requested format
+            # Note: yt-dlp will add the extension automatically
             command = [
                 "yt-dlp.exe", url, 
                 "--write-thumbnail", 
                 "--skip-download",  # Don't download video
                 "--convert-thumbnails", file_extension,
                 "-o", output_template,
-                "--no-playlist"
+                "--no-playlist",
+                "--no-check-certificate"  # Help with some SSL issues
             ]
             print(f"Download mode: Thumbnail ({file_extension.upper()})")
         else:
