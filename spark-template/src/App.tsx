@@ -13,8 +13,22 @@ import { WebsiteIcon } from "@/components/WebsiteIcon"
 import { Play, MusicNote, Image, DownloadSimple, CheckCircle } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
-// Get API URL from environment variable (defaults to localhost:5000)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+// Get API URL from environment variable (defaults to same-origin backend).
+// When the UI is opened via http://localhost we still call the Flask server on 127.0.0.1
+// to avoid conflicts with stray dev servers bound to IPv6 localhost.
+const runtimeOrigin = window.location.origin
+const isLocalhost = runtimeOrigin.includes("localhost")
+const API_URL = import.meta.env.VITE_API_URL || (isLocalhost ? "http://127.0.0.1:5000" : runtimeOrigin)
+
+type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
+type Quality = "8K" | "4K" | "2K" | "1440p" | "1080p" | "720p" | "480p" | "360p" | "240p" | "144p"
+type Bitrate = "320kbps" | "256kbps" | "192kbps" | "160kbps" | "128kbps" | "96kbps" | "64kbps"
+
+const VIDEO_FORMATS: FormatType[] = ["mp4", "webm", "mkv"]
+const AUDIO_FORMATS: FormatType[] = ["mp3", "m4a", "flac"]
+const IMAGE_FORMATS: FormatType[] = ["jpg", "png", "webp"]
+const QUALITY_OPTIONS: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
+const BITRATE_OPTIONS: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
 
 type VideoInfo = {
   title: string
@@ -31,10 +45,6 @@ type VideoInfo = {
   availableBitrates?: Bitrate[]
   extractor?: string
 }
-
-type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
-type Quality = "8K" | "4K" | "2K" | "1440p" | "1080p" | "720p" | "480p" | "360p" | "240p" | "144p"
-type Bitrate = "320kbps" | "256kbps" | "192kbps" | "160kbps" | "128kbps" | "96kbps" | "64kbps"
 
 type DownloadProgress = {
   percentage: number
@@ -61,15 +71,8 @@ function App() {
     audio: true,
     image: true
   })
-  const [availableQualities, setAvailableQualities] = useState<Quality[]>(qualities)
-  const [availableBitrates, setAvailableBitrates] = useState<Bitrate[]>(bitrates)
-
-  const videoFormats: FormatType[] = ["mp4", "webm", "mkv"]
-  const audioFormats: FormatType[] = ["mp3", "m4a", "flac"]
-  const imageFormats: FormatType[] = ["jpg", "png", "webp"]
-
-  const qualities: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
-  const bitrates: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
+  const [availableQualities, setAvailableQualities] = useState<Quality[]>(QUALITY_OPTIONS)
+  const [availableBitrates, setAvailableBitrates] = useState<Bitrate[]>(BITRATE_OPTIONS)
 
   useEffect(() => {
     if (url.length > 10) {
@@ -85,8 +88,8 @@ function App() {
       setDownloadComplete(false)
       setDownloadProgress(null)
       // Reset available qualities and bitrates to defaults
-      setAvailableQualities(qualities)
-      setAvailableBitrates(bitrates)
+  setAvailableQualities(QUALITY_OPTIONS)
+  setAvailableBitrates(BITRATE_OPTIONS)
     }
   }, [url])
 
@@ -135,7 +138,7 @@ function App() {
         console.log('🎬 Available qualities:', data.availableQualities)
       } else {
         // Fallback to all qualities if none detected
-        setAvailableQualities(qualities)
+        setAvailableQualities(QUALITY_OPTIONS)
       }
 
       if (data.availableBitrates && data.availableBitrates.length > 0) {
@@ -143,7 +146,7 @@ function App() {
         console.log('🎵 Available bitrates:', data.availableBitrates)
       } else {
         // Fallback to all bitrates if none detected
-        setAvailableBitrates(bitrates)
+        setAvailableBitrates(BITRATE_OPTIONS)
       }
 
       // Flask backend returns the data directly (not nested in data.data)
@@ -180,10 +183,10 @@ function App() {
     setDownloadComplete(false)
     setDownloadProgress(null)
     
-    if (videoFormats.includes(format)) {
+    if (VIDEO_FORMATS.includes(format)) {
       setSelectedQuality(null)
       setSelectedBitrate(null)
-    } else if (audioFormats.includes(format)) {
+    } else if (AUDIO_FORMATS.includes(format)) {
       setSelectedBitrate(null)
       setSelectedQuality(null)
     } else {
@@ -212,8 +215,8 @@ function App() {
       console.log('Starting download:', { url, format: selectedFormat, quality: selectedQuality, bitrate: selectedBitrate })
       
       // Determine download type
-      const isVideo = videoFormats.includes(selectedFormat)
-      const isAudio = audioFormats.includes(selectedFormat)
+  const isVideo = VIDEO_FORMATS.includes(selectedFormat)
+  const isAudio = AUDIO_FORMATS.includes(selectedFormat)
       const downloadType = isVideo ? 'video' : isAudio ? 'audio' : 'thumbnail'
       
       // Start download
@@ -354,9 +357,9 @@ function App() {
     }, 500) // Poll every 500ms
   }
 
-  const isVideoFormat = selectedFormat && videoFormats.includes(selectedFormat)
-  const isAudioFormat = selectedFormat && audioFormats.includes(selectedFormat)
-  const isImageFormat = selectedFormat && imageFormats.includes(selectedFormat)
+  const isVideoFormat = selectedFormat && VIDEO_FORMATS.includes(selectedFormat)
+  const isAudioFormat = selectedFormat && AUDIO_FORMATS.includes(selectedFormat)
+  const isImageFormat = selectedFormat && IMAGE_FORMATS.includes(selectedFormat)
   const canDownload = selectedFormat && 
     ((isVideoFormat && selectedQuality) || 
      (isAudioFormat && selectedBitrate) || 
@@ -467,7 +470,7 @@ function App() {
 
                   <TabsContent value="video" className="space-y-6 mt-6">
                     <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
-                      {videoFormats.map((format) => (
+                      {VIDEO_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
                           label={format.toUpperCase()}
@@ -506,7 +509,7 @@ function App() {
 
                   <TabsContent value="audio" className="space-y-6 mt-6">
                     <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
-                      {audioFormats.map((format) => (
+                      {AUDIO_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
                           label={format.toUpperCase()}
@@ -545,7 +548,7 @@ function App() {
 
                   <TabsContent value="image" className="space-y-6 mt-6">
                     <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
-                      {imageFormats.map((format) => (
+                      {IMAGE_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
                           label={format.toUpperCase()}

@@ -14,7 +14,10 @@ from functools import lru_cache
 import hashlib
 import threading
 
-app = Flask(__name__)
+# Path to the frontend build folder
+DIST_FOLDER = os.path.join(os.path.dirname(__file__), 'spark-template', 'dist')
+
+app = Flask(__name__, static_folder=DIST_FOLDER, static_url_path='')
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
@@ -266,12 +269,12 @@ def perform_download(session_id, url, format_type, quality, output_template, com
 
 @app.route("/")
 def serve_index():
-    return send_from_directory('.', 'index.html')
+    return send_from_directory(DIST_FOLDER, 'index.html')
 
 @app.route("/sw.js")
 def serve_service_worker():
     """Serve the Monetag service worker file"""
-    return send_from_directory('.', 'sw.js', mimetype='application/javascript')
+    return send_from_directory(DIST_FOLDER, 'sw.js', mimetype='application/javascript')
 
 @app.route("/ping")
 def ping():
@@ -1084,4 +1087,4 @@ if __name__ == "__main__":
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
     
-    app.run(debug=False, port=8000)
+    app.run(debug=False, port=5000)
