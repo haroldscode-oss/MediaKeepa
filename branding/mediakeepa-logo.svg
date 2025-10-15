@@ -1,0 +1,18 @@
+<!-- MediaKeepa Logo - Actual icon from website -->
+<svg width="240" height="48" viewBox="0 0 240 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Rounded square background -->
+  <rect x="4" y="8" width="32" height="32" rx="6" fill="#6366f1"/>
+  
+  <!-- Play triangle -->
+  <path d="M18 18 L28 24 L18 30 Z" fill="white"/>
+  
+  <!-- MediaKeepa Text -->
+  <text x="48" y="32" 
+        font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" 
+        font-size="24" 
+        font-weight="700" 
+        letter-spacing="-0.5" 
+        fill="currentColor">
+    MediaKeepa
+  </text>
+</svg>

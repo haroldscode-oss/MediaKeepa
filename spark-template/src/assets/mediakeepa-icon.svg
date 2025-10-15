@@ -1,0 +1,8 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Phosphor Video Icon (Fill weight) - Icon Only -->
+  <g transform="translate(8, 8)">
+    <path d="M164,48a4,4,0,0,1-2-7.45V71.45A4,4,0,0,1,162,79a4.06,4.06,0,0,1-2-.55l-42-24A4,4,0,0,1,120,48V32a4,4,0,0,1,2-3.45l42-24a4,4,0,0,1,4,.11A4,4,0,0,1,170,8V72a4,4,0,0,1-2,3.45A4,4,0,0,1,164,76ZM110,40v40H32a8,8,0,0,1-8-8V40a8,8,0,0,1,8-8h78A8,8,0,0,1,110,40Z" 
+          transform="scale(0.125)" 
+          fill="currentColor"/>
+  </g>
+</svg>

@@ -132,21 +132,17 @@ function App() {
         console.log('🎯 Media type:', data.mediaType)
       }
 
-      // Update available qualities and bitrates from backend
+      // ALWAYS show ALL qualities and bitrates regardless of detection
+      // This gives users maximum choice and flexibility
+      setAvailableQualities(QUALITY_OPTIONS)
+      setAvailableBitrates(BITRATE_OPTIONS)
+      
+      // Log what was detected (for debugging) but don't limit the UI
       if (data.availableQualities && data.availableQualities.length > 0) {
-        setAvailableQualities(data.availableQualities)
-        console.log('🎬 Available qualities:', data.availableQualities)
-      } else {
-        // Fallback to all qualities if none detected
-        setAvailableQualities(QUALITY_OPTIONS)
+        console.log('🎬 Detected qualities:', data.availableQualities, '(but showing all options)')
       }
-
       if (data.availableBitrates && data.availableBitrates.length > 0) {
-        setAvailableBitrates(data.availableBitrates)
-        console.log('🎵 Available bitrates:', data.availableBitrates)
-      } else {
-        // Fallback to all bitrates if none detected
-        setAvailableBitrates(BITRATE_OPTIONS)
+        console.log('🎵 Detected bitrates:', data.availableBitrates, '(but showing all options)')
       }
 
       // Flask backend returns the data directly (not nested in data.data)
@@ -326,10 +322,17 @@ function App() {
               try {
                 console.log('Downloading file:', data.filename)
                 const downloadUrl = `${API_URL}/get-file/${data.filename}`
-                toast.success(`${videoInfo?.title || 'File'} downloaded successfully!`)
                 
-                // Use window.location to trigger download (more reliable than anchor click)
-                window.location.href = downloadUrl
+                // Create a hidden anchor element to trigger download without navigation
+                const link = document.createElement('a')
+                link.href = downloadUrl
+                link.download = data.filename.split('_', 1)[1] || data.filename // Remove session_id prefix
+                link.style.display = 'none'
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+                
+                toast.success(`${videoInfo?.title || 'File'} downloaded successfully!`)
                 
               } catch (err) {
                 console.error('Download trigger error:', err)

@@ -105,7 +105,7 @@ def sanitize_filename(filename):
     return name + ext
 
 
-def extract_audio_bitrate_kbps(fmt):
+def extract_audio_bitrate_kbps(fmt, duration_seconds=None):
     """Best-effort extraction of an audio track's bitrate in kbps from a yt-dlp format entry."""
 
     def to_float(value):
@@ -120,10 +120,11 @@ def extract_audio_bitrate_kbps(fmt):
         return None
 
     # Direct numeric fields exposed by yt-dlp
-    for key in ("abr", "audio_bitrate"):
-        bitrate = to_float(fmt.get(key))
-        if bitrate and bitrate > 0:
-            return bitrate
+    for key in ("abr", "audio_bitrate", "bitrate", "abr_kbit", "abr_kbps"):
+        if key in fmt:
+            bitrate = to_float(fmt.get(key))
+            if bitrate and bitrate > 0:
+                return bitrate
 
     # Some formats expose the bitrate in textual descriptors like format_id or format_note
     for field in ("format_id", "format", "format_note"):
@@ -140,6 +141,26 @@ def extract_audio_bitrate_kbps(fmt):
         if match:
             return float(match.group(1))
 
+    # Some extractors expose qualitative audio levels we can map to common bitrates
+    audio_quality = fmt.get("audio_quality")
+    if isinstance(audio_quality, str):
+        quality_map = {
+            "lossless": 320,
+            "ultra": 320,
+            "highest": 320,
+            "high": 256,
+            "medium": 192,
+            "standard": 192,
+            "normal": 160,
+            "low": 128,
+            "basic": 96,
+            "economy": 64,
+        }
+        lower_quality = audio_quality.lower()
+        for key, value in quality_map.items():
+            if key in lower_quality:
+                return float(value)
+
     # As a last resort, fall back to total bitrate (tbr) when the stream is audio-only
     tbr = to_float(fmt.get("tbr"))
     if tbr and tbr > 0:
@@ -151,6 +172,29 @@ def extract_audio_bitrate_kbps(fmt):
             return tbr
         if (vcodec in ("none", "") or video_ext in ("none", "")) and not height:
             return tbr
+
+    # Estimate bitrate from filesize and duration for audio-only renditions
+    filesize_bytes = fmt.get("filesize") or fmt.get("filesize_approx")
+    if not filesize_bytes and isinstance(fmt.get("fragments"), list):
+        fragment_sizes = [fragment.get("filesize") for fragment in fmt["fragments"] if fragment.get("filesize")]
+        if fragment_sizes:
+            filesize_bytes = sum(fragment_sizes)
+
+    if filesize_bytes and duration_seconds:
+        try:
+            filesize_float = float(filesize_bytes)
+            duration_float = float(duration_seconds)
+            if duration_float > 0:
+                vcodec = (fmt.get("vcodec") or "").lower()
+                video_ext = (fmt.get("video_ext") or "").lower()
+                height = fmt.get("height")
+
+                if vcodec in ("none", "") or video_ext in ("none", "") or not height:
+                    bitrate = (filesize_float * 8.0) / duration_float / 1000.0
+                    if bitrate > 0:
+                        return bitrate
+        except (TypeError, ValueError):
+            pass
 
     return None
 
@@ -394,39 +438,84 @@ def download():
                     # Get the correct thumbnail URL (prioritize dynamicCover/cover like in video-info)
                     thumbnail_url = video_data.get("thumbnail", "")
                     thumbnails = video_data.get("thumbnails", [])
+                    best_thumbnail_id = "default"
                     if thumbnails:
                         for thumb_priority in ["dynamicCover", "cover", "originCover"]:
                             for thumb in thumbnails:
                                 if thumb.get("id", "") == thumb_priority:
                                     thumbnail_url = thumb.get("url", thumbnail_url)
+                                    best_thumbnail_id = thumb_priority
                                     break
                             if thumbnail_url != video_data.get("thumbnail", ""):
                                 break
+                    
+                    print(f"🎯 Using TikTok {best_thumbnail_id} thumbnail for download")
                     
                     # Download the specific thumbnail URL
                     if thumbnail_url:
                         response = requests.get(thumbnail_url, timeout=10)
                         response.raise_for_status()
                         
+                        # Determine the source format from the URL or content-type
+                        content_type = response.headers.get('content-type', '').lower()
+                        source_ext = 'jpg'
+                        if 'webp' in content_type or '.webp' in thumbnail_url.lower():
+                            source_ext = 'webp'
+                        elif 'png' in content_type or '.png' in thumbnail_url.lower():
+                            source_ext = 'png'
+                        
                         # Save with proper filename
                         title = video_data.get("title", "thumbnail")
-                        # Sanitize title for filename
-                        title = re.sub(r'[<>:"/\\|?*]', '', title)[:100]
-                        thumbnail_filename = f"{session_id}_{title}.{file_extension}"
-                        thumbnail_path = os.path.join(temp_downloads_path, thumbnail_filename)
+                        # Create temp filename with source extension
+                        temp_filename = f"{session_id}_{title}.{source_ext}"
+                        temp_path = os.path.join(temp_downloads_path, temp_filename)
                         
-                        with open(thumbnail_path, 'wb') as f:
+                        with open(temp_path, 'wb') as f:
                             f.write(response.content)
+                        
+                        print(f"✓ Downloaded TikTok thumbnail ({len(response.content)/1024:.1f} KB)")
+                        
+                        # Convert to requested format if different using FFmpeg
+                        if source_ext != file_extension:
+                            converted_filename = f"{session_id}_{title}.{file_extension}"
+                            converted_path = os.path.join(temp_downloads_path, converted_filename)
+                            
+                            print(f"🔄 Converting {source_ext.upper()} → {file_extension.upper()}")
+                            
+                            # Use FFmpeg to convert
+                            ffmpeg_command = [
+                                "ffmpeg.exe", "-i", temp_path, 
+                                "-y",  # Overwrite output file
+                                converted_path
+                            ]
+                            subprocess.run(ffmpeg_command, capture_output=True, check=True)
+                            
+                            # Remove the original temp file
+                            os.remove(temp_path)
+                            final_path = converted_path
+                            final_filename = converted_filename
+                            print(f"✓ Converted to {file_extension.upper()}")
+                        else:
+                            final_path = temp_path
+                            final_filename = temp_filename
+                        
+                        # Sanitize the filename to remove special characters
+                        sanitized_filename = sanitize_filename(final_filename)
+                        sanitized_path = os.path.join(temp_downloads_path, sanitized_filename)
+                        
+                        # Rename to sanitized version
+                        if final_filename != sanitized_filename:
+                            os.rename(final_path, sanitized_path)
                         
                         # Update progress to complete
                         download_progress[session_id] = {
                             'progress': 100,
                             'status': 'complete',
                             'message': 'Download complete!',
-                            'filename': thumbnail_filename
+                            'filename': sanitized_filename
                         }
                         
-                        print(f"✓ TikTok thumbnail downloaded as {file_extension.upper()}: {thumbnail_filename}")
+                        print(f"✅ TikTok thumbnail ready as {file_extension.upper()}: {sanitized_filename}")
                         
                         return jsonify({
                             "status": "started",
@@ -668,18 +757,37 @@ def video_info():
         formats = video_data.get("formats", [])
         extractor = video_data.get("extractor", "").lower()
         extractor_key = video_data.get("extractor_key", "").lower()
-        
+        duration_seconds = video_data.get("duration")
+
         # Check for video streams and collect available qualities
         has_video = False
         has_audio = False
         available_qualities = set()
         available_bitrates = set()
+
+        def bucketize_bitrate(value):
+            if not value or value <= 0:
+                return
+            if value >= 320:
+                available_bitrates.add("320kbps")
+            elif value >= 256:
+                available_bitrates.add("256kbps")
+            elif value >= 192:
+                available_bitrates.add("192kbps")
+            elif value >= 160:
+                available_bitrates.add("160kbps")
+            elif value >= 128:
+                available_bitrates.add("128kbps")
+            elif value >= 96:
+                available_bitrates.add("96kbps")
+            else:
+                available_bitrates.add("64kbps")
         
         for fmt in formats:
             vcodec = fmt.get("vcodec", "none")
             acodec = fmt.get("acodec", "none")
             height = fmt.get("height")
-            bitrate_kbps = extract_audio_bitrate_kbps(fmt)
+            bitrate_kbps = extract_audio_bitrate_kbps(fmt, duration_seconds)
             
             if vcodec and vcodec != "none":
                 has_video = True
@@ -708,21 +816,30 @@ def video_info():
             if acodec and acodec != "none":
                 has_audio = True
                 # Collect audio bitrates
-                if bitrate_kbps and bitrate_kbps > 0:
-                    if bitrate_kbps >= 320:
-                        available_bitrates.add("320kbps")
-                    elif bitrate_kbps >= 256:
-                        available_bitrates.add("256kbps")
-                    elif bitrate_kbps >= 192:
-                        available_bitrates.add("192kbps")
-                    elif bitrate_kbps >= 160:
-                        available_bitrates.add("160kbps")
-                    elif bitrate_kbps >= 128:
-                        available_bitrates.add("128kbps")
-                    elif bitrate_kbps >= 96:
-                        available_bitrates.add("96kbps")
-                    else:
-                        available_bitrates.add("64kbps")
+                bucketize_bitrate(bitrate_kbps)
+
+        # Also inspect requested formats if present (yt-dlp often preselects best audio here)
+        requested_formats = video_data.get("requested_formats") or []
+        for fmt in requested_formats:
+            acodec = fmt.get("acodec", "none")
+            if acodec and acodec != "none":
+                has_audio = True
+                bitrate_kbps = extract_audio_bitrate_kbps(fmt, duration_seconds)
+                bucketize_bitrate(bitrate_kbps)
+
+        # Fallback: try overall info object for bitrate hints
+        if not available_bitrates and has_audio:
+            inferred_bitrate = extract_audio_bitrate_kbps(video_data, duration_seconds)
+            bucketize_bitrate(inferred_bitrate)
+
+        # Platform-specific fallback when bitrate data cannot be detected
+        if not available_bitrates and has_audio:
+            if "tiktok" in extractor or "tiktok" in extractor_key:
+                available_bitrates.add("128kbps")
+                print("🎵 TikTok bitrate unavailable from metadata; defaulting to 128kbps")
+            else:
+                available_bitrates.add("192kbps")
+                print("🎵 Audio bitrate unavailable; providing conservative default 192kbps option")
         
         # Convert sets to sorted lists
         quality_order = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
