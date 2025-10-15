@@ -95,34 +95,63 @@
   }
 }
 
+@keyframes logo-shake {
+  0% {
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(-5deg);
+  }
+  40% {
+    transform: rotate(5deg);
+  }
+  60% {
+    transform: rotate(-5deg);
+  }
+  80% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
 .shimmer-text {
   background: linear-gradient(
     90deg,
-    oklch(0.45 0 0) 0%,
-    oklch(0.6 0 0) 40%,
-    oklch(0.5 0 0) 50%,
-    oklch(0.6 0 0) 60%,
-    oklch(0.45 0 0) 100%
+    oklch(0.35 0 0) 0%,
+    oklch(0.4 0 0) 20%,
+    oklch(0.75 0 0) 45%,
+    oklch(0.95 0 0) 50%,
+    oklch(0.75 0 0) 55%,
+    oklch(0.4 0 0) 80%,
+    oklch(0.35 0 0) 100%
   );
-  background-size: 1000px 100%;
+  background-size: 1200px 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shimmer 2s linear infinite;
+  animation: shimmer 3s ease-in-out infinite;
 }
 
 .dark .shimmer-text {
   background: linear-gradient(
     90deg,
-    oklch(0.6 0 0) 0%,
-    oklch(0.7 0 0) 40%,
-    oklch(0.65 0 0) 50%,
-    oklch(0.7 0 0) 60%,
-    oklch(0.6 0 0) 100%
+    oklch(0.55 0 0) 0%,
+    oklch(0.6 0 0) 20%,
+    oklch(0.85 0 0) 45%,
+    oklch(1 0 0) 50%,
+    oklch(0.85 0 0) 55%,
+    oklch(0.6 0 0) 80%,
+    oklch(0.55 0 0) 100%
   );
-  background-size: 1000px 100%;
+  background-size: 1200px 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shimmer 2s linear infinite;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+.shake-once {
+  animation: logo-shake 0.5s ease-in-out !important;
 }
