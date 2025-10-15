@@ -542,7 +542,8 @@ function App() {
                     >
                       <Button
                         onClick={handleDownload}
-                        className="w-full h-12 text-base font-semibold"
+                        variant="outline"
+                        className="w-full h-12 text-base font-semibold border-2 border-border hover:border-muted-foreground hover:bg-muted/50 text-foreground hover:text-foreground transition-all duration-200"
                         size="lg"
                       >
                         <DownloadSimple className="mr-2" weight="bold" size={20} />
@@ -555,7 +556,7 @@ function App() {
                 </AnimatePresence>
 
                 <AnimatePresence>
-                  {isDownloading && downloadProgress && (
+                  {(isDownloading || downloadComplete) && downloadProgress && (
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -565,23 +566,37 @@ function App() {
                       <Card className="p-6 border-2">
                         <div className="space-y-4">
                           <div className="flex items-center justify-between text-sm">
-                            <span className="font-medium text-foreground">Downloading...</span>
-                            <span className="font-semibold text-primary">
+                            <div className="flex items-center gap-2">
+                              {downloadComplete && (
+                                <motion.div
+                                  initial={{ scale: 0, rotate: -180 }}
+                                  animate={{ scale: 1, rotate: 0 }}
+                                  transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                                >
+                                  <CheckCircle weight="fill" size={20} className="text-foreground" />
+                                </motion.div>
+                              )}
+                              <span className="font-medium text-foreground">
+                                {downloadComplete ? "Download Complete!" : "Downloading..."}
+                              </span>
+                            </div>
+                            <span className="font-semibold text-foreground">
                               {Math.round(downloadProgress.percentage)}%
                             </span>
                           </div>
 
                           <div className="relative h-3 bg-muted rounded-full overflow-hidden">
                             <motion.div
-                              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%]"
+                              className={downloadComplete 
+                                ? "absolute inset-y-0 left-0 rounded-full bg-foreground"
+                                : "absolute inset-y-0 left-0 rounded-full bg-foreground progress-bar-shimmer"
+                              }
                               initial={{ width: 0 }}
                               animate={{ 
-                                width: `${downloadProgress.percentage}%`,
-                                backgroundPosition: ['0% 0%', '100% 0%']
+                                width: `${downloadProgress.percentage}%`
                               }}
                               transition={{ 
-                                width: { duration: 0.1, ease: "linear" },
-                                backgroundPosition: { duration: 1.5, repeat: Infinity, ease: "linear" }
+                                width: { duration: downloadComplete ? 0.3 : 0.1, ease: downloadComplete ? "easeOut" : "linear" }
                               }}
                             />
                           </div>
@@ -594,56 +609,24 @@ function App() {
                               </p>
                             </div>
                             <div className="space-y-1">
-                              <p className="text-xs text-muted-foreground">Speed</p>
+                              <p className="text-xs text-muted-foreground">
+                                {downloadComplete ? "Average Speed" : "Speed"}
+                              </p>
                               <p className="text-sm font-medium">
                                 {downloadProgress.speedMBps.toFixed(1)} MB/s
                               </p>
                             </div>
                             <div className="space-y-1 col-span-2">
-                              <p className="text-xs text-muted-foreground">Time Remaining</p>
+                              <p className="text-xs text-muted-foreground">
+                                {downloadComplete ? "Total Time" : "Time Remaining"}
+                              </p>
                               <p className="text-sm font-medium">
-                                {Math.ceil(downloadProgress.timeRemainingSeconds)} seconds left
+                                {downloadComplete 
+                                  ? `${Math.ceil(downloadProgress.timeRemainingSeconds)} seconds`
+                                  : `${Math.ceil(downloadProgress.timeRemainingSeconds)} seconds left`
+                                }
                               </p>
                             </div>
-                          </div>
-                        </div>
-                      </Card>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <AnimatePresence>
-                  {downloadComplete && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                    >
-                      <Card className="p-6 border-2 border-primary/20 bg-primary/5">
-                        <div className="flex flex-col items-center text-center space-y-3">
-                          <motion.div
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ 
-                              type: "spring", 
-                              stiffness: 200, 
-                              damping: 15,
-                              delay: 0.1 
-                            }}
-                          >
-                            <CheckCircle 
-                              className="text-primary" 
-                              weight="fill" 
-                              size={56} 
-                            />
-                          </motion.div>
-                          <div>
-                            <h3 className="font-semibold text-lg text-foreground">
-                              Download Complete!
-                            </h3>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {videoInfo?.title}
-                            </p>
                           </div>
                         </div>
                       </Card>
