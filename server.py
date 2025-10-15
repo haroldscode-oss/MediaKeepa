@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify, send_from_directory, send_file, Respo
 from flask_cors import CORS
 import subprocess
 import os
-import webbrowser
 import glob
 import uuid
 import re
@@ -14,7 +13,13 @@ from functools import lru_cache
 import hashlib
 import threading
 
-app = Flask(__name__)
+ROOT_DIR = Path(__file__).resolve().parent
+DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
+
+if not DIST_FOLDER.exists():
+    print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
+
+app = Flask(__name__, static_folder=str(DIST_FOLDER), static_url_path="")
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
@@ -148,9 +153,6 @@ def extract_audio_bitrate_kbps(fmt):
             return tbr
 
     return None
-
-# Automatically open browser on server start
-webbrowser.open("http://127.0.0.1:5000")
 
 # Temporary downloads path (in the project folder)
 temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
@@ -314,14 +316,30 @@ def perform_download(session_id, url, format_type, quality, output_template, com
         
         threading.Thread(target=cleanup_error_progress, daemon=True).start()
 
-@app.route("/")
-def serve_index():
-    return send_from_directory('.', 'index.html')
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_index(path):
+    index_path = DIST_FOLDER / "index.html"
+    if not index_path.exists():
+        return jsonify({
+            "status": "error",
+            "message": "Frontend build missing. Please run npm run build inside spark-template."
+        }), 503
+
+    requested_path = DIST_FOLDER / path
+    if path and requested_path.exists() and requested_path.is_file():
+        # Serve existing static asset
+        relative_path = os.path.relpath(requested_path, DIST_FOLDER)
+        return send_from_directory(DIST_FOLDER, relative_path)
+
+    return send_from_directory(DIST_FOLDER, 'index.html')
 
 @app.route("/sw.js")
 def serve_service_worker():
     """Serve the Monetag service worker file"""
-    return send_from_directory('.', 'sw.js', mimetype='application/javascript')
+    sw_path = DIST_FOLDER / "sw.js"
+    source_dir = DIST_FOLDER if sw_path.exists() else ROOT_DIR
+    return send_from_directory(source_dir, 'sw.js', mimetype='application/javascript')
 
 @app.route("/ping")
 def ping():
@@ -1134,4 +1152,4 @@ if __name__ == "__main__":
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
     
-    app.run(debug=False, port=8000)
+    app.run(debug=False, port=5000)
