@@ -150,6 +150,10 @@ function App() {
 
   const handleFormatSelect = (format: FormatType) => {
     setSelectedFormat(format)
+    // Reset download complete state when user changes format
+    setDownloadComplete(false)
+    setDownloadProgress(null)
+    
     if (videoFormats.includes(format)) {
       setSelectedQuality(null)
       setSelectedBitrate(null)
@@ -160,6 +164,15 @@ function App() {
       setSelectedQuality("1080p")
       setSelectedBitrate(null)
     }
+  }
+
+  const handleTabChange = (value: string) => {
+    // Reset download state when switching between Video/Audio/Image tabs
+    setDownloadComplete(false)
+    setDownloadProgress(null)
+    setSelectedFormat(null)
+    setSelectedQuality(null)
+    setSelectedBitrate(null)
   }
 
   const handleDownload = async () => {
@@ -408,6 +421,7 @@ function App() {
                     "video"
                   } 
                   className="w-full"
+                  onValueChange={handleTabChange}
                 >
                   <TabsList className={`grid w-full h-12 ${
                     Object.values(availableTabs).filter(Boolean).length === 3 ? 'grid-cols-3' :

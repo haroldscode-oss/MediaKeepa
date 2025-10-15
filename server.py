@@ -6,6 +6,7 @@ import webbrowser
 import glob
 import uuid
 import re
+import json
 from pathlib import Path
 import requests
 import time
@@ -313,6 +314,61 @@ def download():
             file_extension = format_type.lower()
             output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s")
             
+            # For TikTok, we need to download the CORRECT custom thumbnail (dynamicCover/cover)
+            # not yt-dlp's default which might be originCover (low quality)
+            if "tiktok.com" in url:
+                try:
+                    # Get video info to find the correct thumbnail
+                    info_command = ["yt-dlp.exe", "--dump-json", "--no-playlist", url]
+                    result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
+                    video_data = json.loads(result.stdout)
+                    
+                    # Get the correct thumbnail URL (prioritize dynamicCover/cover like in video-info)
+                    thumbnail_url = video_data.get("thumbnail", "")
+                    thumbnails = video_data.get("thumbnails", [])
+                    if thumbnails:
+                        for thumb_priority in ["dynamicCover", "cover", "originCover"]:
+                            for thumb in thumbnails:
+                                if thumb.get("id", "") == thumb_priority:
+                                    thumbnail_url = thumb.get("url", thumbnail_url)
+                                    break
+                            if thumbnail_url != video_data.get("thumbnail", ""):
+                                break
+                    
+                    # Download the specific thumbnail URL
+                    if thumbnail_url:
+                        response = requests.get(thumbnail_url, timeout=10)
+                        response.raise_for_status()
+                        
+                        # Save with proper filename
+                        title = video_data.get("title", "thumbnail")
+                        # Sanitize title for filename
+                        title = re.sub(r'[<>:"/\\|?*]', '', title)[:100]
+                        thumbnail_filename = f"{session_id}_{title}.{file_extension}"
+                        thumbnail_path = os.path.join(temp_downloads_path, thumbnail_filename)
+                        
+                        with open(thumbnail_path, 'wb') as f:
+                            f.write(response.content)
+                        
+                        # Update progress to complete
+                        download_progress[session_id] = {
+                            'progress': 100,
+                            'status': 'complete',
+                            'message': 'Download complete!',
+                            'filename': thumbnail_filename
+                        }
+                        
+                        print(f"✓ TikTok thumbnail downloaded as {file_extension.upper()}: {thumbnail_filename}")
+                        
+                        return jsonify({
+                            "status": "started",
+                            "session_id": session_id,
+                            "message": "Download started"
+                        })
+                except Exception as e:
+                    print(f"⚠ TikTok thumbnail download failed, falling back to yt-dlp: {e}")
+            
+            # For non-TikTok or fallback, use yt-dlp's --write-thumbnail
             # Download thumbnail and convert to requested format
             # Note: yt-dlp will add the extension automatically
             command = [
@@ -458,6 +514,23 @@ def video_info():
         thumbnail_url = video_data.get("thumbnail", "")
         local_thumbnail = ""
         
+        # For TikTok, prefer dynamicCover or cover (the REAL custom thumbnails with text overlays!)
+        # originCover is tiny (8KB) and low quality, but cover/dynamicCover are high quality (3MB+)
+        if "tiktok.com" in url:
+            thumbnails = video_data.get("thumbnails", [])
+            if thumbnails:
+                # Try dynamicCover and cover first (these are the actual custom thumbnails!)
+                # originCover is just a small preview frame
+                for thumb_priority in ["dynamicCover", "cover", "originCover"]:
+                    for thumb in thumbnails:
+                        thumb_id = thumb.get("id", "")
+                        if thumb_id == thumb_priority:
+                            thumbnail_url = thumb.get("url", thumbnail_url)
+                            print(f"✓ Using TikTok {thumb_id} thumbnail")
+                            break
+                    if thumbnail_url != video_data.get("thumbnail", ""):
+                        break  # Found a better thumbnail, stop searching
+        
         # For YouTube, construct high-quality thumbnail URL directly
         if "youtube.com" in url or "youtu.be" in url:
             video_id = video_data.get("id")
@@ -466,8 +539,8 @@ def video_info():
                 thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
                 local_thumbnail = thumbnail_url
         
-        # For Instagram, download thumbnail locally (CORS blocked otherwise)
-        elif "instagram.com" in url:
+        # For Instagram and TikTok, download thumbnail locally (CORS blocked otherwise)
+        elif "instagram.com" in url or "tiktok.com" in url:
             if thumbnail_url:
                 try:
                     session_id = str(uuid.uuid4())[:8]
@@ -479,23 +552,20 @@ def video_info():
                         ext = "webp"
                     
                     thumbnail_filename = f"thumb_{session_id}.{ext}"
+                    thumbnail_path = os.path.join(temp_downloads_path, thumbnail_filename)
                     
-                    # Use yt-dlp to download the thumbnail (handles Instagram auth)
-                    thumb_command = ["yt-dlp.exe", "--write-thumbnail", "--skip-download", "-o", 
-                                   os.path.join(temp_downloads_path, f"thumb_{session_id}"), url]
+                    platform_name = "TikTok" if "tiktok.com" in url else "Instagram"
                     
-                    print(f"⏳ Downloading Instagram thumbnail...")
-                    thumb_result = subprocess.run(thumb_command, capture_output=True, text=True, timeout=8)
+                    # Download the SPECIFIC thumbnail URL we selected (not yt-dlp's default!)
+                    print(f"⏳ Downloading {platform_name} thumbnail from: {thumbnail_url[:80]}...")
+                    response = requests.get(thumbnail_url, timeout=10)
+                    response.raise_for_status()
                     
-                    # Find the downloaded thumbnail file
-                    thumb_files = glob.glob(os.path.join(temp_downloads_path, f"thumb_{session_id}.*"))
-                    if thumb_files:
-                        actual_thumbnail = os.path.basename(thumb_files[0])
-                        local_thumbnail = f"/thumbnail/{actual_thumbnail}"
-                        print(f"✓ Instagram thumbnail downloaded: {actual_thumbnail}")
-                    else:
-                        print("⚠ Thumbnail download failed, using direct URL (may be blocked)")
-                        local_thumbnail = thumbnail_url
+                    with open(thumbnail_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    local_thumbnail = f"/thumbnail/{thumbnail_filename}"
+                    print(f"✓ {platform_name} thumbnail downloaded: {thumbnail_filename} ({len(response.content)/1024:.1f} KB)")
                         
                 except Exception as e:
                     print(f"⚠ Thumbnail download error: {e}")
@@ -503,7 +573,7 @@ def video_info():
             else:
                 local_thumbnail = thumbnail_url
         
-        # For TikTok and other platforms, use direct URL
+        # For other platforms, use direct URL
         else:
             local_thumbnail = thumbnail_url
         
