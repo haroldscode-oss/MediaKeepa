@@ -22,6 +22,26 @@ if not DIST_FOLDER.exists():
 app = Flask(__name__, static_folder=str(DIST_FOLDER), static_url_path="")
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 
+# Feature flags file (allows enabling features like Claude/Sonnet externally)
+FEATURES_FILE = ROOT_DIR / "features.json"
+features = {"claude_sonnet_3_5": False}
+
+def load_feature_flags():
+    """Load feature flags from `features.json` if present, otherwise use defaults."""
+    global features
+    try:
+        if FEATURES_FILE.exists():
+            with open(FEATURES_FILE, "r", encoding="utf-8") as f:
+                features = json.load(f)
+                print(f"✓ Loaded feature flags from {FEATURES_FILE.name}: {features}")
+        else:
+            print(f"ℹ️  Feature flags file not found, using defaults: {features}")
+    except Exception as e:
+        print(f"⚠️ Failed to load feature flags: {e}")
+
+
+load_feature_flags()
+
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
 video_cache = {}
 CACHE_DURATION = 3600  # 1 hour in seconds
@@ -73,6 +93,43 @@ def cleanup_old_files():
                 
         except Exception as e:
             print(f"❌ Error in cleanup thread: {e}")
+
+def get_best_tiktok_thumbnail(video_data):
+    """
+    Extract the best quality TikTok thumbnail URL from video metadata.
+    Priority: dynamicCover > cover > originCover > default
+    Returns: (thumbnail_url, thumbnail_id)
+    """
+    thumbnails = video_data.get("thumbnails", [])
+    default_thumbnail = video_data.get("thumbnail", "")
+    
+    # Debug: Print all available thumbnails
+    print(f"🔍 DEBUG: Found {len(thumbnails)} thumbnails for TikTok video")
+    for i, thumb in enumerate(thumbnails):
+        thumb_id = thumb.get("id", "unknown")
+        thumb_url = thumb.get("url", "")[:100]  # First 100 chars
+        print(f"   [{i}] ID: {thumb_id}, URL: {thumb_url}...")
+    
+    if not thumbnails:
+        print(f"⚠️  No thumbnails array found, using default: {default_thumbnail[:100]}...")
+        return default_thumbnail, "default"
+    
+    # Priority order: dynamicCover and cover are high quality (3MB+)
+    # originCover is low quality (8KB) - avoid if possible
+    priority_order = ["dynamicCover", "cover", "originCover"]
+    
+    for thumb_priority in priority_order:
+        for thumb in thumbnails:
+            if thumb.get("id", "") == thumb_priority:
+                url = thumb.get("url")
+                if url:
+                    print(f"✅ Selected thumbnail: {thumb_priority} - {url[:100]}...")
+                    return url, thumb_priority
+    
+    # Fallback to default if no match found
+    print(f"⚠️  No priority thumbnails found, using default: {default_thumbnail[:100]}...")
+    return default_thumbnail, "default"
+
 
 def sanitize_filename(filename):
     """
@@ -389,6 +446,12 @@ def serve_service_worker():
 def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
 
+
+@app.route("/feature-flags", methods=["GET"])
+def get_feature_flags():
+    """Return current feature flags (useful for frontend to check whether to enable features)."""
+    return jsonify(features)
+
 @app.route("/download", methods=["POST"])
 def download():
     data = request.get_json()
@@ -435,87 +498,65 @@ def download():
                     result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
                     video_data = json.loads(result.stdout)
                     
-                    # Get the correct thumbnail URL (prioritize dynamicCover/cover like in video-info)
-                    thumbnail_url = video_data.get("thumbnail", "")
-                    thumbnails = video_data.get("thumbnails", [])
-                    best_thumbnail_id = "default"
-                    if thumbnails:
-                        for thumb_priority in ["dynamicCover", "cover", "originCover"]:
-                            for thumb in thumbnails:
-                                if thumb.get("id", "") == thumb_priority:
-                                    thumbnail_url = thumb.get("url", thumbnail_url)
-                                    best_thumbnail_id = thumb_priority
-                                    break
-                            if thumbnail_url != video_data.get("thumbnail", ""):
-                                break
+                    # Use the shared helper function to get the EXACT same thumbnail as preview
+                    thumbnail_url, best_thumbnail_id = get_best_tiktok_thumbnail(video_data)
                     
                     print(f"🎯 Using TikTok {best_thumbnail_id} thumbnail for download")
                     
                     # Download the specific thumbnail URL
                     if thumbnail_url:
+                        print(f"📥 Downloading from URL: {thumbnail_url[:150]}...")
                         response = requests.get(thumbnail_url, timeout=10)
                         response.raise_for_status()
                         
-                        # Determine the source format from the URL or content-type
+                        # Check content type to ensure we're getting an image, not a video
                         content_type = response.headers.get('content-type', '').lower()
+                        content_length = len(response.content)
+                        
+                        print(f"📦 Received: {content_type}, Size: {content_length/1024:.1f} KB")
+                        
+                        # If we got a video instead of an image, this is the wrong thumbnail
+                        if 'video' in content_type or 'mp4' in content_type:
+                            print(f"⚠️  WARNING: Thumbnail URL returned a VIDEO ({content_type}), not an image!")
+                            print(f"⚠️  This means TikTok returned the wrong thumbnail. Falling back to yt-dlp.")
+                            raise Exception("Thumbnail URL returned video instead of image")
+                        
+                        # Determine the source format from the URL or content-type
                         source_ext = 'jpg'
                         if 'webp' in content_type or '.webp' in thumbnail_url.lower():
                             source_ext = 'webp'
                         elif 'png' in content_type or '.png' in thumbnail_url.lower():
                             source_ext = 'png'
+                        elif 'jpeg' in content_type or 'jpg' in content_type:
+                            source_ext = 'jpg'
                         
-                        # Save with proper filename
+                        # Save with proper filename - SANITIZE BEFORE SAVING!
                         title = video_data.get("title", "thumbnail")
-                        # Create temp filename with source extension
+                        # Create temp filename with source extension and sanitize it
                         temp_filename = f"{session_id}_{title}.{source_ext}"
+                        temp_filename = sanitize_filename(temp_filename)  # Fix invalid characters
                         temp_path = os.path.join(temp_downloads_path, temp_filename)
                         
                         with open(temp_path, 'wb') as f:
                             f.write(response.content)
                         
-                        print(f"✓ Downloaded TikTok thumbnail ({len(response.content)/1024:.1f} KB)")
+                        print(f"✓ Downloaded TikTok thumbnail as {source_ext.upper()} ({content_length/1024:.1f} KB)")
                         
-                        # Convert to requested format if different using FFmpeg
-                        if source_ext != file_extension:
-                            converted_filename = f"{session_id}_{title}.{file_extension}"
-                            converted_path = os.path.join(temp_downloads_path, converted_filename)
-                            
-                            print(f"🔄 Converting {source_ext.upper()} → {file_extension.upper()}")
-                            
-                            # Use FFmpeg to convert
-                            ffmpeg_command = [
-                                "ffmpeg.exe", "-i", temp_path, 
-                                "-y",  # Overwrite output file
-                                converted_path
-                            ]
-                            subprocess.run(ffmpeg_command, capture_output=True, check=True)
-                            
-                            # Remove the original temp file
-                            os.remove(temp_path)
-                            final_path = converted_path
-                            final_filename = converted_filename
-                            print(f"✓ Converted to {file_extension.upper()}")
-                        else:
-                            final_path = temp_path
-                            final_filename = temp_filename
-                        
-                        # Sanitize the filename to remove special characters
-                        sanitized_filename = sanitize_filename(final_filename)
-                        sanitized_path = os.path.join(temp_downloads_path, sanitized_filename)
-                        
-                        # Rename to sanitized version
-                        if final_filename != sanitized_filename:
-                            os.rename(final_path, sanitized_path)
+                        # For now, deliver the thumbnail in its native format from TikTok
+                        # (usually WebP or JPG) - this ensures we get the correct custom thumbnail
+                        # without relying on external conversion tools
+                        final_filename = temp_filename
+                        print(f"✅ TikTok custom thumbnail ready: {final_filename}")
                         
                         # Update progress to complete
                         download_progress[session_id] = {
                             'progress': 100,
                             'status': 'complete',
                             'message': 'Download complete!',
-                            'filename': sanitized_filename
+                            'filename': final_filename
                         }
                         
-                        print(f"✅ TikTok thumbnail ready as {file_extension.upper()}: {sanitized_filename}")
+                        print(f"✅ TikTok thumbnail ready as {file_extension.upper()}: {final_filename}")
                         
                         return jsonify({
                             "status": "started",
@@ -674,19 +715,9 @@ def video_info():
         # For TikTok, prefer dynamicCover or cover (the REAL custom thumbnails with text overlays!)
         # originCover is tiny (8KB) and low quality, but cover/dynamicCover are high quality (3MB+)
         if "tiktok.com" in url:
-            thumbnails = video_data.get("thumbnails", [])
-            if thumbnails:
-                # Try dynamicCover and cover first (these are the actual custom thumbnails!)
-                # originCover is just a small preview frame
-                for thumb_priority in ["dynamicCover", "cover", "originCover"]:
-                    for thumb in thumbnails:
-                        thumb_id = thumb.get("id", "")
-                        if thumb_id == thumb_priority:
-                            thumbnail_url = thumb.get("url", thumbnail_url)
-                            print(f"✓ Using TikTok {thumb_id} thumbnail")
-                            break
-                    if thumbnail_url != video_data.get("thumbnail", ""):
-                        break  # Found a better thumbnail, stop searching
+            # Use the shared helper function to ensure consistency with download
+            thumbnail_url, thumb_id = get_best_tiktok_thumbnail(video_data)
+            print(f"✓ Using TikTok {thumb_id} thumbnail for preview")
         
         # For YouTube, construct high-quality thumbnail URL directly
         if "youtube.com" in url or "youtu.be" in url:
