@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -73,6 +73,9 @@ function App() {
   })
   const [availableQualities, setAvailableQualities] = useState<Quality[]>(QUALITY_OPTIONS)
   const [availableBitrates, setAvailableBitrates] = useState<Bitrate[]>(BITRATE_OPTIONS)
+  
+  // Ref to store the progress polling interval (fixes race condition)
+  const pollIntervalRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (url.length > 10) {
@@ -254,7 +257,12 @@ function App() {
   }
 
   const pollDownloadProgress = async (sid: string) => {
-    const interval = setInterval(async () => {
+    // Clear any existing interval before starting a new one (fixes race condition)
+    if (pollIntervalRef.current !== null) {
+      clearInterval(pollIntervalRef.current)
+    }
+    
+    pollIntervalRef.current = window.setInterval(async () => {
       try {
         const response = await fetch(`${API_URL}/download-progress/${sid}`)
         const data = await response.json()
@@ -309,7 +317,10 @@ function App() {
         
         // Check if complete (either 'complete' status or 'processing' with filename)
         if (status === 'complete' || (status === 'processing' && data.filename)) {
-          clearInterval(interval)
+          if (pollIntervalRef.current !== null) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+          }
           
           console.log('Download complete! Full response:', data)
           
@@ -347,12 +358,18 @@ function App() {
         
         // Check for errors
         if (status === 'error') {
-          clearInterval(interval)
+          if (pollIntervalRef.current !== null) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+          }
           throw new Error(data.message || 'Download failed')
         }
         
       } catch (err) {
-        clearInterval(interval)
+        if (pollIntervalRef.current !== null) {
+          clearInterval(pollIntervalRef.current)
+          pollIntervalRef.current = null
+        }
         console.error('Progress polling error:', err)
         toast.error('Download failed')
         setIsDownloading(false)

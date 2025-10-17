@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import subprocess
 import os
 import glob
@@ -20,7 +22,19 @@ if not DIST_FOLDER.exists():
     print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
 
 app = Flask(__name__, static_folder=str(DIST_FOLDER), static_url_path="")
-CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
+
+# CORS Configuration - CHANGE THIS TO YOUR ACTUAL DOMAIN for production!
+# For development, use localhost. For production, replace with your domain.
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5000,http://127.0.0.1:5000").split(",")
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS, "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
+
+# Rate Limiting - Prevents abuse and spam
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
 
 # Feature flags file (allows enabling features like Claude/Sonnet externally)
 FEATURES_FILE = ROOT_DIR / "features.json"
@@ -453,6 +467,7 @@ def get_feature_flags():
     return jsonify(features)
 
 @app.route("/download", methods=["POST"])
+@limiter.limit("10 per minute")  # Limit to 10 downloads per minute per IP
 def download():
     data = request.get_json()
     url = data.get("url")
@@ -468,6 +483,32 @@ def download():
     if not url or not format_type:
         print("ERROR: Missing URL or format")
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
+    
+    # BASIC SECURITY VALIDATION - Block dangerous URL schemes and local addresses
+    # This allows all yt-dlp supported sites (1000+) while preventing obvious attacks
+    dangerous_patterns = [
+        r'^(file|ftp|ssh|telnet|data|javascript):',  # Dangerous protocols
+        r'(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)',   # Local addresses
+        r'192\.168\.',                                 # Private network
+        r'10\.\d{1,3}\.\d{1,3}\.\d{1,3}',             # Private network
+        r'172\.(1[6-9]|2[0-9]|3[0-1])\.',             # Private network
+    ]
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, url, re.IGNORECASE):
+            print(f"❌ REJECTED: Dangerous URL pattern detected: {url}")
+            return jsonify({
+                "status": "error", 
+                "message": "Invalid URL: Dangerous protocol or local address not allowed."
+            }), 400
+    
+    # Ensure it's at least a valid http/https URL
+    if not url.startswith(('http://', 'https://')):
+        print(f"❌ REJECTED: Not a valid HTTP(S) URL: {url}")
+        return jsonify({
+            "status": "error", 
+            "message": "Invalid URL: Must be a valid HTTP or HTTPS link."
+        }), 400
 
     try:
         # Generate unique session ID for this download
@@ -653,6 +694,7 @@ def download():
 
 # New endpoint to check download progress
 @app.route("/download-progress/<session_id>", methods=["GET"])
+@limiter.exempt  # Exempt from rate limiting - this is just status checking
 def get_download_progress(session_id):
     """Get the current progress of a download session"""
     if session_id not in download_progress:
@@ -661,6 +703,7 @@ def get_download_progress(session_id):
     return jsonify(download_progress[session_id])
 
 @app.route("/video-info", methods=["POST"])
+@limiter.limit("30 per minute")  # Limit to 30 info requests per minute per IP
 def video_info():
     """Fetch video information including thumbnail using yt-dlp with caching"""
     data = request.get_json()
@@ -668,6 +711,30 @@ def video_info():
     
     if not url:
         return jsonify({"status": "error", "message": "Missing URL"}), 400
+    
+    # BASIC SECURITY VALIDATION - Same as download endpoint
+    dangerous_patterns = [
+        r'^(file|ftp|ssh|telnet|data|javascript):',
+        r'(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)',
+        r'192\.168\.',
+        r'10\.\d{1,3}\.\d{1,3}\.\d{1,3}',
+        r'172\.(1[6-9]|2[0-9]|3[0-1])\.',
+    ]
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, url, re.IGNORECASE):
+            print(f"❌ REJECTED: Dangerous URL pattern detected: {url}")
+            return jsonify({
+                "status": "error", 
+                "message": "Invalid URL: Dangerous protocol or local address not allowed."
+            }), 400
+    
+    if not url.startswith(('http://', 'https://')):
+        print(f"❌ REJECTED: Not a valid HTTP(S) URL: {url}")
+        return jsonify({
+            "status": "error", 
+            "message": "Invalid URL: Must be a valid HTTP or HTTPS link."
+        }), 400
     
     # Create cache key from URL
     cache_key = hashlib.md5(url.encode()).hexdigest()
@@ -820,7 +887,14 @@ def video_info():
             height = fmt.get("height")
             bitrate_kbps = extract_audio_bitrate_kbps(fmt, duration_seconds)
             
-            if vcodec and vcodec != "none":
+            # Check if format has video (vcodec is not "none" and not None, OR has video_ext, OR has .mp4/.webm/.mkv URL)
+            format_url = fmt.get("url", "")
+            video_ext = fmt.get("video_ext", "none")
+            has_video_codec = vcodec and vcodec not in ("none", "None", None)
+            has_video_extension = video_ext and video_ext not in ("none", "None", None)
+            has_video_url = any(ext in format_url.lower() for ext in [".mp4", ".webm", ".mkv", ".mov", ".avi", ".flv"])
+            
+            if has_video_codec or has_video_extension or has_video_url:
                 has_video = True
                 # Collect video qualities
                 if height:
