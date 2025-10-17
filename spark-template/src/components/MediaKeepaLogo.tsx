@@ -27,7 +27,7 @@ export function MediaKeepaLogo() {
         whileHover={{ rotate: [0, -5, 5, -5, 0] }}
         transition={{ duration: 0.5 }}
       >
-        <Video weight="fill" size={32} className="text-primary" />
+        <Video weight="fill" size={32} style={{ color: '#8B5CF6' }} />
       </motion.div>
       <div className="flex flex-col">
         <span className="text-2xl font-bold text-foreground tracking-tight">
