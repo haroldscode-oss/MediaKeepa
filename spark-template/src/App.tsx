@@ -15,6 +15,7 @@ import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
 import { Play, MusicNote, Image, DownloadSimple, CheckCircle, ClosedCaptioning } from "@phosphor-icons/react"
 import { toast } from "sonner"
+import { Toaster } from "@/components/ui/sonner"
 
 // Get API URL from environment variable (defaults to same-origin backend).
 // When the UI is opened via http://localhost we still call the Flask server on 127.0.0.1
@@ -467,18 +468,17 @@ function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="w-full max-w-2xl mx-auto space-y-8">
-        <div className="flex justify-between items-center pt-4">
-          <MediaKeepaLogo />
-          <ThemeToggle />
-        </div>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="space-y-8 pb-8"
-        >
+    <div className="w-full max-w-2xl mx-auto space-y-6 sm:space-y-8">
+      <div className="flex items-center justify-between">
+        <MediaKeepaLogo />
+        <ThemeToggle />
+      </div>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+        className="space-y-8 pb-8"
+      >
           <div className="space-y-4">
             <div className="relative">
               <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center">
@@ -597,7 +597,7 @@ function HomePage() {
                         >
                           <label className="text-sm font-medium">Select Quality</label>
                           <Select value={selectedQuality || ""} onValueChange={(v) => setSelectedQuality(v as Quality)}>
-                            <SelectTrigger className="h-11 border-2 bg-card">
+                            <SelectTrigger className="w-full h-11 border-2">
                               <SelectValue placeholder="Select quality" />
                             </SelectTrigger>
                             <SelectContent>
@@ -636,7 +636,7 @@ function HomePage() {
                         >
                           <label className="text-sm font-medium">Select Bitrate</label>
                           <Select value={selectedBitrate || ""} onValueChange={(v) => setSelectedBitrate(v as Bitrate)}>
-                            <SelectTrigger className="h-11 border-2 bg-card">
+                            <SelectTrigger className="w-full h-11 border-2">
                               <SelectValue placeholder="Select bitrate" />
                             </SelectTrigger>
                             <SelectContent>
@@ -693,7 +693,7 @@ function HomePage() {
                           <div className="space-y-2">
                             <label className="text-sm font-medium">Select Language</label>
                             <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
-                              <SelectTrigger className="h-11 border-2 bg-card">
+                              <SelectTrigger className="w-full h-11 border-2">
                                 <SelectValue placeholder="Select language" />
                               </SelectTrigger>
                               <SelectContent>
@@ -834,7 +834,6 @@ function HomePage() {
             )}
           </AnimatePresence>
         </motion.div>
-      </div>
     </div>
   )
 }
@@ -843,7 +842,8 @@ function App() {
   return (
     <Router>
       <div className="min-h-screen bg-background flex flex-col">
-        <div className="flex-1">
+        <Toaster position="top-center" />
+        <div className="flex-1 px-4 py-6 sm:p-8">
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/legal/:page" element={<LegalPage />} />

@@ -36,9 +36,9 @@ export function WebsiteIcon({ url, className = "" }: WebsiteIconProps) {
             className={className}
             onError={() => setFaviconError(true)}
             style={{ objectFit: 'contain' }}
-            initial={{ opacity: 0, y: 10, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.8 }}
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
           />
         </AnimatePresence>
