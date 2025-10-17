@@ -13,7 +13,7 @@ import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
-import { Play, MusicNote, Image, DownloadSimple, CheckCircle } from "@phosphor-icons/react"
+import { Play, MusicNote, Image, DownloadSimple, CheckCircle, ClosedCaptioning } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
 // Get API URL from environment variable (defaults to same-origin backend).
@@ -26,10 +26,16 @@ const API_URL = import.meta.env.VITE_API_URL || (isLocalhost ? "http://127.0.0.1
 type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
 type Quality = "8K" | "4K" | "2K" | "1440p" | "1080p" | "720p" | "480p" | "360p" | "240p" | "144p"
 type Bitrate = "320kbps" | "256kbps" | "192kbps" | "160kbps" | "128kbps" | "96kbps" | "64kbps"
+type CaptionFormat = "txt" | "srt" | "vtt"
+type Language = {
+  code: string
+  name: string
+}
 
 const VIDEO_FORMATS: FormatType[] = ["mp4", "webm", "mkv"]
 const AUDIO_FORMATS: FormatType[] = ["mp3", "m4a", "flac"]
 const IMAGE_FORMATS: FormatType[] = ["jpg", "png", "webp"]
+const CAPTION_FORMATS: CaptionFormat[] = ["txt", "srt", "vtt"]
 const QUALITY_OPTIONS: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
 const BITRATE_OPTIONS: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
 
@@ -72,10 +78,15 @@ function HomePage() {
   const [availableTabs, setAvailableTabs] = useState({
     video: true,
     audio: true,
-    image: true
+    image: true,
+    captions: true
   })
   const [availableQualities, setAvailableQualities] = useState<Quality[]>(QUALITY_OPTIONS)
   const [availableBitrates, setAvailableBitrates] = useState<Bitrate[]>(BITRATE_OPTIONS)
+  const [selectedCaptionFormat, setSelectedCaptionFormat] = useState<CaptionFormat | null>(null)
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("")
+  const [availableLanguages, setAvailableLanguages] = useState<Language[]>([])
+  const [captionsSelected, setCaptionsSelected] = useState(false)
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
@@ -93,6 +104,10 @@ function HomePage() {
       setSelectedBitrate(null)
       setDownloadComplete(false)
       setDownloadProgress(null)
+      setAvailableLanguages([])
+      setSelectedLanguage("")
+      setSelectedCaptionFormat(null)
+      setCaptionsSelected(false)
       // Reset available qualities and bitrates to defaults
   setAvailableQualities(QUALITY_OPTIONS)
   setAvailableBitrates(BITRATE_OPTIONS)
@@ -132,7 +147,8 @@ function HomePage() {
         setAvailableTabs({
           video: data.availableFormats.video || false,
           audio: data.availableFormats.audio || false,
-          image: data.availableFormats.image || false
+          image: data.availableFormats.image || false,
+          captions: true
         })
         console.log('📋 Available tabs:', data.availableFormats)
         console.log('🎯 Media type:', data.mediaType)
@@ -388,6 +404,68 @@ function HomePage() {
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
 
+  const fetchCaptionLanguages = async () => {
+    if (!url) return
+    
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      const mockLanguages: Language[] = [
+        { code: "en", name: "English" },
+        { code: "es", name: "Spanish" },
+        { code: "fr", name: "French" },
+        { code: "de", name: "German" },
+        { code: "ja", name: "Japanese" },
+        { code: "ko", name: "Korean" },
+        { code: "zh", name: "Chinese" },
+        { code: "pt", name: "Portuguese" },
+        { code: "ru", name: "Russian" },
+        { code: "it", name: "Italian" },
+      ]
+      
+      setAvailableLanguages(mockLanguages)
+    } catch (error) {
+      toast.error('No captions found for this video')
+      setAvailableLanguages([])
+    }
+  }
+
+  const handleCaptionsClick = () => {
+    if (!captionsSelected && availableLanguages.length === 0) {
+      fetchCaptionLanguages()
+    }
+    setCaptionsSelected(true)
+    setDownloadProgress(null)
+    setDownloadComplete(false)
+  }
+
+  const handleCaptionDownload = async () => {
+    if (!selectedLanguage || !url) return
+
+    setIsDownloading(true)
+    setDownloadProgress(null)
+    setDownloadComplete(false)
+    toast.success('Downloading captions...')
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      
+      setDownloadComplete(true)
+      toast.success('Captions downloaded!')
+      
+      const link = document.createElement('a')
+      const urlBlob = URL.createObjectURL(new Blob(['mock caption content'], { type: 'text/plain' }))
+      link.href = urlBlob
+      link.download = `captions.${selectedCaptionFormat}`
+      link.click()
+      URL.revokeObjectURL(urlBlob)
+    } catch (error) {
+      toast.error('Failed to download captions')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
       <div className="w-full max-w-2xl mx-auto space-y-8">
@@ -469,6 +547,7 @@ function HomePage() {
                   defaultValue={
                     availableTabs.video ? "video" : 
                     availableTabs.audio ? "audio" : 
+                    availableTabs.captions ? "captions" :
                     availableTabs.image ? "image" : 
                     "video"
                   } 
@@ -476,6 +555,7 @@ function HomePage() {
                   onValueChange={handleTabChange}
                 >
                   <TabsList className={`grid w-full h-12 ${
+                    Object.values(availableTabs).filter(Boolean).length === 4 ? 'grid-cols-4' :
                     Object.values(availableTabs).filter(Boolean).length === 3 ? 'grid-cols-3' :
                     Object.values(availableTabs).filter(Boolean).length === 2 ? 'grid-cols-2' :
                     'grid-cols-1'
@@ -488,6 +568,9 @@ function HomePage() {
                     )}
                     {availableTabs.image && (
                       <TabsTrigger value="image" className="text-sm font-medium">Image</TabsTrigger>
+                    )}
+                    {availableTabs.captions && (
+                      <TabsTrigger value="captions" className="text-sm font-medium">Caption</TabsTrigger>
                     )}
                   </TabsList>
 
@@ -512,7 +595,7 @@ function HomePage() {
                           exit={{ opacity: 0, height: 0 }}
                           className="space-y-2"
                         >
-                          <label className="text-sm font-medium text-muted-foreground">Quality</label>
+                          <label className="text-sm font-medium">Select Quality</label>
                           <Select value={selectedQuality || ""} onValueChange={(v) => setSelectedQuality(v as Quality)}>
                             <SelectTrigger className="h-11 border-2 bg-card">
                               <SelectValue placeholder="Select quality" />
@@ -551,7 +634,7 @@ function HomePage() {
                           exit={{ opacity: 0, height: 0 }}
                           className="space-y-2"
                         >
-                          <label className="text-sm font-medium text-muted-foreground">Bitrate</label>
+                          <label className="text-sm font-medium">Select Bitrate</label>
                           <Select value={selectedBitrate || ""} onValueChange={(v) => setSelectedBitrate(v as Bitrate)}>
                             <SelectTrigger className="h-11 border-2 bg-card">
                               <SelectValue placeholder="Select bitrate" />
@@ -581,6 +664,68 @@ function HomePage() {
                         />
                       ))}
                     </div>
+                  </TabsContent>
+
+                  <TabsContent value="captions" className="space-y-6 mt-6">
+                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+                      {CAPTION_FORMATS.map((format) => (
+                        <FormatOption
+                          key={format}
+                          label={format.toUpperCase()}
+                          selected={selectedCaptionFormat === format}
+                          onClick={() => {
+                            handleCaptionsClick()
+                            setSelectedCaptionFormat(format)
+                          }}
+                          icon={<ClosedCaptioning weight="fill" />}
+                        />
+                      ))}
+                    </div>
+
+                    <AnimatePresence>
+                      {captionsSelected && selectedCaptionFormat && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="space-y-4"
+                        >
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Select Language</label>
+                            <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                              <SelectTrigger className="h-11 border-2 bg-card">
+                                <SelectValue placeholder="Select language" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableLanguages.map((lang) => (
+                                  <SelectItem key={lang.code} value={lang.code}>
+                                    {lang.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {selectedLanguage && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                            >
+                              <Button
+                                variant="outline"
+                                onClick={handleCaptionDownload}
+                                disabled={!selectedLanguage || isDownloading}
+                                className="w-full h-12 text-base font-semibold border-2 border-border hover:border-muted-foreground hover:bg-muted/50 text-foreground hover:text-foreground transition-all duration-200"
+                                size="lg"
+                              >
+                                <DownloadSimple className="mr-2 shrink-0" weight="bold" size={20} />
+                                <span className="truncate">Download Caption ({selectedCaptionFormat?.toUpperCase()})</span>
+                              </Button>
+                            </motion.div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </TabsContent>
                 </Tabs>
 
