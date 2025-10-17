@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -10,6 +11,8 @@ import { FormatOption } from "@/components/FormatOption"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
+import { Footer } from "@/components/Footer"
+import { LegalPage } from "@/pages/LegalPage"
 import { Play, MusicNote, Image, DownloadSimple, CheckCircle } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
@@ -54,7 +57,7 @@ type DownloadProgress = {
   timeRemainingSeconds: number
 }
 
-function App() {
+function HomePage() {
   const [url, setUrl] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
@@ -688,6 +691,22 @@ function App() {
         </motion.div>
       </div>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <Router>
+      <div className="min-h-screen bg-background flex flex-col">
+        <div className="flex-1">
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/legal/:page" element={<LegalPage />} />
+          </Routes>
+        </div>
+        <Footer />
+      </div>
+    </Router>
   )
 }
 
