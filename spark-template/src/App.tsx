@@ -115,6 +115,16 @@ function HomePage() {
     }
   }, [url])
 
+  // Cleanup interval on component unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current !== null) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+    }
+  }, [])
+
   const fetchVideoInfo = async (videoUrl: string) => {
     setIsLoading(true)
     setError("")
@@ -149,20 +159,15 @@ function HomePage() {
           video: data.availableFormats.video || false,
           audio: data.availableFormats.audio || false,
           image: data.availableFormats.image || false,
-          captions: data.captionData?.has_captions || false  // Set based on backend data
+          captions: true  // Always show Caption tab - check on-demand when user clicks
         })
         console.log('📋 Available tabs:', data.availableFormats)
         console.log('🎯 Media type:', data.mediaType)
       }
       
-      // Set caption languages if available
-      if (data.captionData?.has_captions && data.captionData.languages) {
-        setAvailableLanguages(data.captionData.languages)
-        console.log(`✓ Found ${data.captionData.languages.length} caption languages`)
-      } else {
-        setAvailableLanguages([])
-        console.log('No captions available for this video')
-      }
+      // Reset caption state - will be loaded when user clicks Caption tab
+      setAvailableLanguages([])
+      console.log('Caption tab will be checked on-demand when user clicks it')
 
       // ALWAYS show ALL qualities and bitrates regardless of detection
       // This gives users maximum choice and flexibility
@@ -414,11 +419,120 @@ function HomePage() {
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
 
-  const handleCaptionsClick = () => {
-    // Languages are already loaded from video-info, no need to refetch
+  const handleCaptionsClick = async () => {
     setCaptionsSelected(true)
     setDownloadProgress(null)
     setDownloadComplete(false)
+    
+    // If languages already loaded, skip the check
+    if (availableLanguages.length > 0) {
+      console.log('Caption languages already loaded')
+      return
+    }
+    
+    // Start caption check with progress feedback
+    setIsDownloading(true) // Shows loading state
+    toast.info('Checking for captions...')
+    
+    try {
+      console.log('Starting caption check for:', url)
+      
+      const response = await fetch(`${API_URL}/check-captions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to start caption check')
+      }
+      
+      const data = await response.json()
+      
+      if (data.status === 'started' && data.session_id) {
+        console.log('Caption check started, session ID:', data.session_id)
+        
+        // Poll for progress (same pattern as video downloads!)
+        const sessionId = data.session_id
+        
+        // Clear any existing interval
+        if (pollIntervalRef.current !== null) {
+          clearInterval(pollIntervalRef.current)
+        }
+        
+        pollIntervalRef.current = window.setInterval(async () => {
+          try {
+            const progressResponse = await fetch(`${API_URL}/download-progress/${sessionId}`)
+            const progressData = await progressResponse.json()
+            
+            if (!progressResponse.ok) {
+              throw new Error('Failed to get caption check progress')
+            }
+            
+            // Update progress display
+            const progress = parseFloat(progressData.progress) || 0
+            setDownloadProgress({
+              percentage: progress,
+              downloadedMB: 0,
+              totalMB: 0,
+              speedMBps: 0,
+              timeRemainingSeconds: 0
+            })
+            
+            console.log(`Caption check progress: ${progress}% - ${progressData.message}`)
+            
+            // Check if complete
+            if (progressData.status === 'complete') {
+              if (pollIntervalRef.current !== null) {
+                clearInterval(pollIntervalRef.current)
+                pollIntervalRef.current = null
+              }
+              
+              setIsDownloading(false)
+              setDownloadProgress(null)
+              
+              if (progressData.has_captions && progressData.languages) {
+                setAvailableLanguages(progressData.languages)
+                toast.success(`Found ${progressData.languages.length} caption languages!`)
+                console.log(`✓ Found ${progressData.languages.length} languages:`, progressData.languages)
+              } else {
+                setAvailableLanguages([])
+                toast.info('No captions available for this video')
+                console.log('✗ No captions found')
+              }
+            }
+            
+            // Check for errors
+            if (progressData.status === 'error') {
+              if (pollIntervalRef.current !== null) {
+                clearInterval(pollIntervalRef.current)
+                pollIntervalRef.current = null
+              }
+              throw new Error(progressData.message || 'Caption check failed')
+            }
+            
+          } catch (err) {
+            if (pollIntervalRef.current !== null) {
+              clearInterval(pollIntervalRef.current)
+              pollIntervalRef.current = null
+            }
+            console.error('Caption check polling error:', err)
+            toast.error('Failed to check captions')
+            setIsDownloading(false)
+            setDownloadProgress(null)
+          }
+        }, 500) // Poll every 500ms
+        
+      } else {
+        throw new Error('Invalid response from server')
+      }
+      
+    } catch (err) {
+      console.error('Error starting caption check:', err)
+      toast.error(err instanceof Error ? err.message : 'Failed to check captions')
+      setIsDownloading(false)
+      setDownloadProgress(null)
+    }
   }
 
   const handleCaptionDownload = async () => {

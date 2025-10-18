@@ -14,6 +14,7 @@ import time
 from functools import lru_cache
 import hashlib
 import threading
+import secrets
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
@@ -1050,15 +1051,8 @@ def video_info():
             "extractor": extractor
         }
         
-        # Check for caption availability
-        print("🎬 Checking for captions...")
-        caption_data = check_caption_availability(url)
-        info["captionData"] = caption_data
-        
-        if caption_data["has_captions"]:
-            print(f"✓ Found {len(caption_data['languages'])} caption languages")
-        else:
-            print("✗ No captions available")
+        # Caption checking moved to on-demand /check-captions endpoint
+        # This speeds up initial load from 7s to 1-2s
         
         # Cache the result
         video_cache[cache_key] = (info, time.time())
@@ -1490,27 +1484,31 @@ def get_language_name(lang_code):
     return lang_name
 
 
-@app.route("/caption-languages", methods=["POST"])
-@limiter.limit("20 per minute")
-def caption_languages():
+def perform_caption_check(session_id, url):
     """
-    Check if video has captions and return available languages.
-    Works with any platform that yt-dlp supports.
+    Background thread function to check caption availability with progress updates.
+    Similar to perform_download() but for caption checking.
     """
-    data = request.get_json()
-    url = data.get("url")
-    
-    print(f"\n=== CAPTION LANGUAGES REQUEST ===")
-    print(f"URL: {url}")
-    print(f"=================================\n")
-    
-    if not url:
-        return jsonify({"status": "error", "message": "Missing URL"}), 400
-    
     try:
+        download_progress[session_id] = {
+            "status": "checking",
+            "progress": "0",
+            "message": "Checking for captions..."
+        }
+        
+        print(f"\n=== CAPTION CHECK (Session: {session_id}) ===")
+        print(f"URL: {url}")
+        
+        # Simulate progress updates during caption check
+        download_progress[session_id]["progress"] = "25"
+        download_progress[session_id]["message"] = "Fetching subtitle information..."
+        
         # Run yt-dlp --list-subs to get available captions
         command = ["yt-dlp.exe", "--list-subs", url, "--no-playlist"]
         print(f"Running command: {' '.join(command)}")
+        
+        download_progress[session_id]["progress"] = "50"
+        download_progress[session_id]["message"] = "Parsing caption data..."
         
         result = subprocess.run(
             command,
@@ -1522,19 +1520,23 @@ def caption_languages():
         )
         
         output = result.stdout + result.stderr
-        print(f"yt-dlp output:\n{output}")
+        
+        download_progress[session_id]["progress"] = "75"
+        download_progress[session_id]["message"] = "Processing languages..."
         
         # Check if video has no subtitles
         if "has no subtitles" in output.lower():
             print("✗ No captions available for this video")
-            return jsonify({
-                "status": "success",
+            download_progress[session_id] = {
+                "status": "complete",
+                "progress": "100",
                 "has_captions": False,
-                "languages": []
-            })
+                "languages": [],
+                "message": "No captions available"
+            }
+            return
         
         # Parse available subtitle languages from output
-        # Format: "Language    Formats" followed by language lines
         languages = []
         in_subtitle_section = False
         
@@ -1567,27 +1569,71 @@ def caption_languages():
         
         if languages:
             print(f"✓ Found {len(languages)} caption languages")
-            return jsonify({
-                "status": "success",
+            download_progress[session_id] = {
+                "status": "complete",
+                "progress": "100",
                 "has_captions": True,
-                "languages": languages
-            })
+                "languages": languages,
+                "message": f"Found {len(languages)} languages"
+            }
         else:
             print("✗ No captions found in output")
-            return jsonify({
-                "status": "success",
+            download_progress[session_id] = {
+                "status": "complete",
+                "progress": "100",
                 "has_captions": False,
-                "languages": []
-            })
+                "languages": [],
+                "message": "No captions found"
+            }
             
     except subprocess.TimeoutExpired:
-        print("ERROR: Caption language check timed out")
-        return jsonify({
+        print("ERROR: Caption check timed out")
+        download_progress[session_id] = {
             "status": "error",
-            "message": "Request timed out"
-        }), 504
+            "message": "Caption check timed out"
+        }
     except Exception as e:
-        print(f"ERROR checking caption languages: {type(e).__name__}: {str(e)}")
+        print(f"ERROR checking captions: {type(e).__name__}: {str(e)}")
+        download_progress[session_id] = {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.route("/check-captions", methods=["POST"])
+@limiter.limit("20 per minute")
+def check_captions():
+    """
+    Check if video has captions - returns immediately with session_id for progress polling.
+    This endpoint is called ONLY when user clicks the Caption tab (lazy loading).
+    """
+    data = request.get_json()
+    url = data.get("url")
+    
+    if not url:
+        return jsonify({"status": "error", "message": "Missing URL"}), 400
+    
+    try:
+        # Generate session ID for progress tracking
+        session_id = secrets.token_hex(8)
+        
+        # Start caption check in background thread
+        check_thread = threading.Thread(
+            target=perform_caption_check,
+            args=(session_id, url)
+        )
+        check_thread.daemon = True
+        check_thread.start()
+        
+        # Return session_id immediately so frontend can poll for progress
+        return jsonify({
+            "status": "started",
+            "session_id": session_id,
+            "message": "Caption check started"
+        })
+        
+    except Exception as e:
+        print(f"ERROR starting caption check: {type(e).__name__}: {str(e)}")
         return jsonify({
             "status": "error",
             "message": str(e)
