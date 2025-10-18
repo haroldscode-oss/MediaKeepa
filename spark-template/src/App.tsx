@@ -33,9 +33,9 @@ type Language = {
   name: string
 }
 
-const VIDEO_FORMATS: FormatType[] = ["mp4", "webm", "mkv"]
+const VIDEO_FORMATS: FormatType[] = ["mp4", "mkv", "webm"]
 const AUDIO_FORMATS: FormatType[] = ["mp3", "m4a", "flac"]
-const IMAGE_FORMATS: FormatType[] = ["jpg", "png", "webp"]
+const IMAGE_FORMATS: FormatType[] = ["png", "jpg", "webp"]
 const CAPTION_FORMATS: CaptionFormat[] = ["txt", "srt", "vtt"]
 const QUALITY_OPTIONS: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
 const BITRATE_OPTIONS: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]

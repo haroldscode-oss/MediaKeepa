@@ -37,26 +37,6 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
-# Feature flags file (allows enabling features like Claude/Sonnet externally)
-FEATURES_FILE = ROOT_DIR / "features.json"
-features = {"claude_sonnet_3_5": False}
-
-def load_feature_flags():
-    """Load feature flags from `features.json` if present, otherwise use defaults."""
-    global features
-    try:
-        if FEATURES_FILE.exists():
-            with open(FEATURES_FILE, "r", encoding="utf-8") as f:
-                features = json.load(f)
-                print(f"✓ Loaded feature flags from {FEATURES_FILE.name}: {features}")
-        else:
-            print(f"ℹ️  Feature flags file not found, using defaults: {features}")
-    except Exception as e:
-        print(f"⚠️ Failed to load feature flags: {e}")
-
-
-load_feature_flags()
-
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
 video_cache = {}
 CACHE_DURATION = 3600  # 1 hour in seconds
@@ -460,12 +440,6 @@ def serve_service_worker():
 @app.route("/ping")
 def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
-
-
-@app.route("/feature-flags", methods=["GET"])
-def get_feature_flags():
-    """Return current feature flags (useful for frontend to check whether to enable features)."""
-    return jsonify(features)
 
 @app.route("/download", methods=["POST"])
 @limiter.limit("10 per minute")  # Limit to 10 downloads per minute per IP
