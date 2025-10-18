@@ -575,7 +575,7 @@ function HomePage() {
                   </TabsList>
 
                   <TabsContent value="video" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+                    <div className="grid grid-cols-3 gap-3">
                       {VIDEO_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
@@ -614,7 +614,7 @@ function HomePage() {
                   </TabsContent>
 
                   <TabsContent value="audio" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+                    <div className="grid grid-cols-3 gap-3">
                       {AUDIO_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
@@ -653,7 +653,7 @@ function HomePage() {
                   </TabsContent>
 
                   <TabsContent value="image" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+                    <div className="grid grid-cols-3 gap-3">
                       {IMAGE_FORMATS.map((format) => (
                         <FormatOption
                           key={format}
@@ -667,7 +667,7 @@ function HomePage() {
                   </TabsContent>
 
                   <TabsContent value="captions" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+                    <div className="grid grid-cols-3 gap-3">
                       {CAPTION_FORMATS.map((format) => (
                         <FormatOption
                           key={format}

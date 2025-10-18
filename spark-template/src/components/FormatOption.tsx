@@ -13,8 +13,8 @@ export function FormatOption({ label, selected, onClick, icon }: FormatOptionPro
     <motion.button
       onClick={onClick}
       className={cn(
-        "relative px-5 py-3.5 rounded-lg border-2 transition-all duration-200",
-        "flex items-center gap-2.5 text-sm font-medium min-w-[120px] justify-center",
+        "relative px-3 sm:px-5 py-3.5 rounded-lg border-2 transition-all duration-200",
+        "flex items-center gap-2 sm:gap-2.5 text-sm font-medium justify-center",
         selected
           ? "border-foreground bg-muted text-foreground"
           : "border-border bg-card hover:border-muted-foreground hover:bg-muted/50 text-foreground"
@@ -22,8 +22,8 @@ export function FormatOption({ label, selected, onClick, icon }: FormatOptionPro
       whileHover={{ y: -2 }}
       whileTap={{ scale: 0.98 }}
     >
-      {icon && <span className="text-base">{icon}</span>}
-      {label}
+      {icon && <span className="text-base shrink-0">{icon}</span>}
+      <span className="truncate">{label}</span>
     </motion.button>
   )
 }
