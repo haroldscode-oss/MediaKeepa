@@ -1,7 +1,15 @@
 import { motion } from "framer-motion"
 import { Video } from "@phosphor-icons/react"
+import { useState } from "react"
 
 export function MediaKeepaLogo() {
+  const [isShaking, setIsShaking] = useState(false)
+
+  const handleClick = () => {
+    setIsShaking(true)
+    setTimeout(() => setIsShaking(false), 500)
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -20 }}
@@ -11,7 +19,6 @@ export function MediaKeepaLogo() {
         transition: { duration: 0.6, ease: "easeOut" }
       }}
       onAnimationComplete={() => {
-        // Trigger shake after landing
         const logoElement = document.querySelector('.logo-icon');
         if (logoElement) {
           logoElement.classList.add('shake-once');
@@ -23,9 +30,11 @@ export function MediaKeepaLogo() {
       className="flex items-center gap-2"
     >
       <motion.div
-        className="flex items-center justify-center logo-icon"
+        className="flex items-center justify-center logo-icon cursor-pointer"
         whileHover={{ rotate: [0, -5, 5, -5, 0] }}
+        animate={isShaking ? { rotate: [0, -5, 5, -5, 0] } : {}}
         transition={{ duration: 0.5 }}
+        onClick={handleClick}
       >
         <Video weight="fill" size={32} style={{ color: '#8B5CF6' }} />
       </motion.div>
