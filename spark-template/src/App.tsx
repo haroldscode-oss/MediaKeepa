@@ -149,14 +149,20 @@ function HomePage() {
           video: data.availableFormats.video || false,
           audio: data.availableFormats.audio || false,
           image: data.availableFormats.image || false,
-          captions: false // Will be updated after checking for captions
+          captions: data.captionData?.has_captions || false  // Set based on backend data
         })
         console.log('📋 Available tabs:', data.availableFormats)
         console.log('🎯 Media type:', data.mediaType)
       }
       
-      // Check for caption availability
-      checkCaptionAvailability(videoUrl)
+      // Set caption languages if available
+      if (data.captionData?.has_captions && data.captionData.languages) {
+        setAvailableLanguages(data.captionData.languages)
+        console.log(`✓ Found ${data.captionData.languages.length} caption languages`)
+      } else {
+        setAvailableLanguages([])
+        console.log('No captions available for this video')
+      }
 
       // ALWAYS show ALL qualities and bitrates regardless of detection
       // This gives users maximum choice and flexibility
@@ -408,73 +414,8 @@ function HomePage() {
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
 
-  const checkCaptionAvailability = async (videoUrl: string) => {
-    try {
-      const response = await fetch(`${API_URL}/caption-languages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: videoUrl })
-      })
-
-      if (!response.ok) {
-        console.error('Failed to check caption availability')
-        return
-      }
-
-      const data = await response.json()
-      
-      if (data.has_captions && data.languages && data.languages.length > 0) {
-        setAvailableLanguages(data.languages)
-        // Enable captions tab since captions are available
-        setAvailableTabs(prev => ({ ...prev, captions: true }))
-        console.log(`✓ Found ${data.languages.length} caption languages`)
-      } else {
-        setAvailableLanguages([])
-        // Keep captions tab hidden
-        setAvailableTabs(prev => ({ ...prev, captions: false }))
-        console.log('No captions available for this video')
-      }
-    } catch (error) {
-      console.error('Error checking caption availability:', error)
-      setAvailableLanguages([])
-      setAvailableTabs(prev => ({ ...prev, captions: false }))
-    }
-  }
-
-  const fetchCaptionLanguages = async () => {
-    if (!url) return
-    
-    try {
-      const response = await fetch(`${API_URL}/caption-languages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch caption languages')
-      }
-
-      const data = await response.json()
-      
-      if (data.has_captions && data.languages && data.languages.length > 0) {
-        setAvailableLanguages(data.languages)
-        console.log(`Found ${data.languages.length} caption languages`)
-      } else {
-        setAvailableLanguages([])
-        toast.info('No captions available for this video')
-      }
-    } catch (error) {
-      console.error('Error fetching caption languages:', error)
-      toast.error('Failed to check for captions')
-      setAvailableLanguages([])
-    }
-  }
-
   const handleCaptionsClick = () => {
-    if (!captionsSelected && availableLanguages.length === 0) {
-      fetchCaptionLanguages()
-    }
+    // Languages are already loaded from video-info, no need to refetch
     setCaptionsSelected(true)
     setDownloadProgress(null)
     setDownloadComplete(false)

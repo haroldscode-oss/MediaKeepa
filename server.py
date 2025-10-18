@@ -1050,6 +1050,16 @@ def video_info():
             "extractor": extractor
         }
         
+        # Check for caption availability
+        print("🎬 Checking for captions...")
+        caption_data = check_caption_availability(url)
+        info["captionData"] = caption_data
+        
+        if caption_data["has_captions"]:
+            print(f"✓ Found {len(caption_data['languages'])} caption languages")
+        else:
+            print("✗ No captions available")
+        
         # Cache the result
         video_cache[cache_key] = (info, time.time())
         
@@ -1367,6 +1377,71 @@ def proxy_video():
             "status": "error",
             "message": str(e)
         }), 500
+
+def check_caption_availability(url):
+    """
+    Helper function to check if video has captions.
+    Returns dict with has_captions (bool) and languages (list).
+    """
+    try:
+        # Run yt-dlp --list-subs to get available captions
+        command = ["yt-dlp.exe", "--list-subs", url, "--no-playlist"]
+        
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Check if video has no subtitles
+        if "has no subtitles" in output.lower():
+            return {"has_captions": False, "languages": []}
+        
+        # Parse available subtitle languages from output
+        languages = []
+        in_subtitle_section = False
+        
+        for line in output.split('\n'):
+            line = line.strip()
+            
+            # Detect subtitle section header
+            if "Available subtitles" in line or "Language" in line and "Formats" in line:
+                in_subtitle_section = True
+                continue
+            
+            # Parse language lines
+            if in_subtitle_section and line:
+                # Skip empty lines and separator lines
+                if not line or line.startswith('-'):
+                    continue
+                
+                # Extract language code (first word before whitespace)
+                parts = line.split()
+                if parts:
+                    lang_code = parts[0]
+                    # Skip if it's a format name (vtt, srt, etc.)
+                    if lang_code.lower() not in ['vtt', 'srt', 'ttml', 'json3', 'srv1', 'srv2', 'srv3']:
+                        # Get readable language name
+                        lang_name = get_language_name(lang_code)
+                        languages.append({
+                            "code": lang_code,
+                            "name": lang_name
+                        })
+        
+        return {
+            "has_captions": len(languages) > 0,
+            "languages": languages
+        }
+        
+    except Exception as e:
+        print(f"ERROR checking captions: {type(e).__name__}: {str(e)}")
+        return {"has_captions": False, "languages": []}
+
 
 # Language code to name mapping
 LANGUAGE_NAMES = {
