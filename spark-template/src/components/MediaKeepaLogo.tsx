@@ -31,7 +31,6 @@ export function MediaKeepaLogo() {
     >
       <motion.div
         className="flex items-center justify-center logo-icon cursor-pointer"
-        whileHover={{ rotate: [0, -5, 5, -5, 0] }}
         animate={isShaking ? { rotate: [0, -5, 5, -5, 0] } : {}}
         transition={{ duration: 0.5 }}
         onClick={handleClick}
