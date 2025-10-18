@@ -149,11 +149,14 @@ function HomePage() {
           video: data.availableFormats.video || false,
           audio: data.availableFormats.audio || false,
           image: data.availableFormats.image || false,
-          captions: true
+          captions: false // Will be updated after checking for captions
         })
         console.log('📋 Available tabs:', data.availableFormats)
         console.log('🎯 Media type:', data.mediaType)
       }
+      
+      // Check for caption availability
+      checkCaptionAvailability(videoUrl)
 
       // ALWAYS show ALL qualities and bitrates regardless of detection
       // This gives users maximum choice and flexibility
@@ -405,28 +408,65 @@ function HomePage() {
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
 
+  const checkCaptionAvailability = async (videoUrl: string) => {
+    try {
+      const response = await fetch(`${API_URL}/caption-languages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: videoUrl })
+      })
+
+      if (!response.ok) {
+        console.error('Failed to check caption availability')
+        return
+      }
+
+      const data = await response.json()
+      
+      if (data.has_captions && data.languages && data.languages.length > 0) {
+        setAvailableLanguages(data.languages)
+        // Enable captions tab since captions are available
+        setAvailableTabs(prev => ({ ...prev, captions: true }))
+        console.log(`✓ Found ${data.languages.length} caption languages`)
+      } else {
+        setAvailableLanguages([])
+        // Keep captions tab hidden
+        setAvailableTabs(prev => ({ ...prev, captions: false }))
+        console.log('No captions available for this video')
+      }
+    } catch (error) {
+      console.error('Error checking caption availability:', error)
+      setAvailableLanguages([])
+      setAvailableTabs(prev => ({ ...prev, captions: false }))
+    }
+  }
+
   const fetchCaptionLanguages = async () => {
     if (!url) return
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      const response = await fetch(`${API_URL}/caption-languages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch caption languages')
+      }
+
+      const data = await response.json()
       
-      const mockLanguages: Language[] = [
-        { code: "en", name: "English" },
-        { code: "es", name: "Spanish" },
-        { code: "fr", name: "French" },
-        { code: "de", name: "German" },
-        { code: "ja", name: "Japanese" },
-        { code: "ko", name: "Korean" },
-        { code: "zh", name: "Chinese" },
-        { code: "pt", name: "Portuguese" },
-        { code: "ru", name: "Russian" },
-        { code: "it", name: "Italian" },
-      ]
-      
-      setAvailableLanguages(mockLanguages)
+      if (data.has_captions && data.languages && data.languages.length > 0) {
+        setAvailableLanguages(data.languages)
+        console.log(`Found ${data.languages.length} caption languages`)
+      } else {
+        setAvailableLanguages([])
+        toast.info('No captions available for this video')
+      }
     } catch (error) {
-      toast.error('No captions found for this video')
+      console.error('Error fetching caption languages:', error)
+      toast.error('Failed to check for captions')
       setAvailableLanguages([])
     }
   }
@@ -446,23 +486,77 @@ function HomePage() {
     setIsDownloading(true)
     setDownloadProgress(null)
     setDownloadComplete(false)
-    toast.success('Downloading captions...')
+    toast.success('Starting caption download...')
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      // Start caption download
+      const response = await fetch(`${API_URL}/download-caption`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          url, 
+          language: selectedLanguage, 
+          format: selectedCaptionFormat 
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to start caption download')
+      }
+
+      const data = await response.json()
       
-      setDownloadComplete(true)
-      toast.success('Captions downloaded!')
-      
-      const link = document.createElement('a')
-      const urlBlob = URL.createObjectURL(new Blob(['mock caption content'], { type: 'text/plain' }))
-      link.href = urlBlob
-      link.download = `captions.${selectedCaptionFormat}`
-      link.click()
-      URL.revokeObjectURL(urlBlob)
+      if (data.status === 'started' && data.session_id) {
+        // Poll for download progress
+        const sessionId = data.session_id
+        const pollInterval = setInterval(async () => {
+          try {
+            const progressResponse = await fetch(`${API_URL}/download-progress/${sessionId}`)
+            const progressData = await progressResponse.json()
+
+            if (progressData.status === 'complete' && progressData.filename) {
+              clearInterval(pollInterval)
+              setDownloadComplete(true)
+              toast.success('Caption downloaded!')
+
+              // Download the file
+              const fileUrl = `${API_URL}/get-file/${progressData.filename}`
+              const link = document.createElement('a')
+              link.href = fileUrl
+              link.download = progressData.filename
+              link.click()
+
+              setIsDownloading(false)
+            } else if (progressData.status === 'error') {
+              clearInterval(pollInterval)
+              toast.error(progressData.message || 'Caption download failed')
+              setIsDownloading(false)
+            } else {
+              // Update progress
+              setDownloadProgress(progressData.progress || 0)
+            }
+          } catch (error) {
+            clearInterval(pollInterval)
+            console.error('Error polling progress:', error)
+            toast.error('Failed to check download progress')
+            setIsDownloading(false)
+          }
+        }, 500) // Poll every 500ms
+
+        // Set timeout to stop polling after 2 minutes
+        setTimeout(() => {
+          clearInterval(pollInterval)
+          if (isDownloading) {
+            toast.error('Caption download timed out')
+            setIsDownloading(false)
+          }
+        }, 120000)
+      } else {
+        throw new Error('Invalid response from server')
+      }
     } catch (error) {
-      toast.error('Failed to download captions')
-    } finally {
+      console.error('Error downloading caption:', error)
+      toast.error('Failed to download caption')
       setIsDownloading(false)
     }
   }

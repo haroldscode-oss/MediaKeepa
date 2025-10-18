@@ -1368,6 +1368,381 @@ def proxy_video():
             "message": str(e)
         }), 500
 
+# Language code to name mapping
+LANGUAGE_NAMES = {
+    'eng': 'English', 'spa': 'Spanish', 'fra': 'French', 'deu': 'German', 'ita': 'Italian',
+    'por': 'Portuguese', 'rus': 'Russian', 'jpn': 'Japanese', 'kor': 'Korean', 'cmn': 'Chinese',
+    'ara': 'Arabic', 'hin': 'Hindi', 'ben': 'Bengali', 'tur': 'Turkish', 'vie': 'Vietnamese',
+    'pol': 'Polish', 'ukr': 'Ukrainian', 'nld': 'Dutch', 'tha': 'Thai', 'ind': 'Indonesian',
+    'heb': 'Hebrew', 'ces': 'Czech', 'ron': 'Romanian', 'swe': 'Swedish', 'dan': 'Danish',
+    'fin': 'Finnish', 'nor': 'Norwegian', 'bul': 'Bulgarian', 'cat': 'Catalan', 'hrv': 'Croatian',
+    'hun': 'Hungarian', 'lit': 'Lithuanian', 'lav': 'Latvian', 'est': 'Estonian', 'slk': 'Slovak',
+    'slv': 'Slovenian', 'srp': 'Serbian', 'ell': 'Greek', 'alb': 'Albanian', 'mkd': 'Macedonian',
+    'uzb': 'Uzbek', 'kaz': 'Kazakh', 'aze': 'Azerbaijani', 'urd': 'Urdu', 'khm': 'Khmer',
+    'swa': 'Swahili', 'jav': 'Javanese', 'ceb': 'Cebuano', 'fil': 'Filipino', 'msa': 'Malay'
+}
+
+def get_language_name(lang_code):
+    """
+    Convert language code to readable name.
+    Examples: 'eng-US' -> 'English (US)', 'jpn-JP' -> 'Japanese', 'cmn-Hans-CN' -> 'Chinese (Simplified)'
+    """
+    if not lang_code:
+        return lang_code
+    
+    # Split by hyphen
+    parts = lang_code.split('-')
+    base_code = parts[0].lower()
+    
+    # Get base language name
+    lang_name = LANGUAGE_NAMES.get(base_code, base_code.title())
+    
+    # Add region/variant if present
+    if len(parts) > 1:
+        region = parts[-1].upper()  # Last part is usually region (US, GB, CN, etc.)
+        
+        # Special handling for Chinese variants
+        if base_code == 'cmn':
+            if 'Hans' in lang_code:
+                return 'Chinese (Simplified)'
+            elif 'Hant' in lang_code:
+                return 'Chinese (Traditional)'
+        
+        # Add region for specific cases
+        if region in ['US', 'GB', 'CA', 'AU', 'BR', 'MX', 'ES', 'PT']:
+            return f"{lang_name} ({region})"
+    
+    return lang_name
+
+
+@app.route("/caption-languages", methods=["POST"])
+@limiter.limit("20 per minute")
+def caption_languages():
+    """
+    Check if video has captions and return available languages.
+    Works with any platform that yt-dlp supports.
+    """
+    data = request.get_json()
+    url = data.get("url")
+    
+    print(f"\n=== CAPTION LANGUAGES REQUEST ===")
+    print(f"URL: {url}")
+    print(f"=================================\n")
+    
+    if not url:
+        return jsonify({"status": "error", "message": "Missing URL"}), 400
+    
+    try:
+        # Run yt-dlp --list-subs to get available captions
+        command = ["yt-dlp.exe", "--list-subs", url, "--no-playlist"]
+        print(f"Running command: {' '.join(command)}")
+        
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        output = result.stdout + result.stderr
+        print(f"yt-dlp output:\n{output}")
+        
+        # Check if video has no subtitles
+        if "has no subtitles" in output.lower():
+            print("✗ No captions available for this video")
+            return jsonify({
+                "status": "success",
+                "has_captions": False,
+                "languages": []
+            })
+        
+        # Parse available subtitle languages from output
+        # Format: "Language    Formats" followed by language lines
+        languages = []
+        in_subtitle_section = False
+        
+        for line in output.split('\n'):
+            line = line.strip()
+            
+            # Detect subtitle section header
+            if "Available subtitles" in line or "Language" in line and "Formats" in line:
+                in_subtitle_section = True
+                continue
+            
+            # Parse language lines
+            if in_subtitle_section and line:
+                # Skip empty lines and separator lines
+                if not line or line.startswith('-'):
+                    continue
+                
+                # Extract language code (first word before whitespace)
+                parts = line.split()
+                if parts:
+                    lang_code = parts[0]
+                    # Skip if it's a format name (vtt, srt, etc.)
+                    if lang_code.lower() not in ['vtt', 'srt', 'ttml', 'json3', 'srv1', 'srv2', 'srv3']:
+                        # Get readable language name
+                        lang_name = get_language_name(lang_code)
+                        languages.append({
+                            "code": lang_code,
+                            "name": lang_name
+                        })
+        
+        if languages:
+            print(f"✓ Found {len(languages)} caption languages")
+            return jsonify({
+                "status": "success",
+                "has_captions": True,
+                "languages": languages
+            })
+        else:
+            print("✗ No captions found in output")
+            return jsonify({
+                "status": "success",
+                "has_captions": False,
+                "languages": []
+            })
+            
+    except subprocess.TimeoutExpired:
+        print("ERROR: Caption language check timed out")
+        return jsonify({
+            "status": "error",
+            "message": "Request timed out"
+        }), 504
+    except Exception as e:
+        print(f"ERROR checking caption languages: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
+def convert_caption_to_txt(vtt_file_path):
+    """
+    Convert VTT caption file to plain text format.
+    Removes timestamps, formatting, and keeps only the spoken text.
+    """
+    try:
+        with open(vtt_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        lines = content.split('\n')
+        text_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Skip empty lines
+            if not line:
+                continue
+            
+            # Skip WEBVTT header
+            if line.startswith('WEBVTT'):
+                continue
+            
+            # Skip timestamp lines (contains -->)
+            if '-->' in line:
+                continue
+            
+            # Skip cue identifiers (numbers or timestamps at start)
+            if line.replace(':', '').replace('.', '').replace(',', '').isdigit():
+                continue
+            
+            # Skip NOTE lines (VTT comments)
+            if line.startswith('NOTE'):
+                continue
+            
+            # Remove HTML-like tags (e.g., <v Speaker>, <i>, </i>)
+            import re
+            line = re.sub(r'<[^>]+>', '', line)
+            
+            # Add the cleaned line if it has content
+            if line and line not in text_lines:  # Avoid duplicates
+                text_lines.append(line)
+        
+        # Join with newlines and return
+        return '\n'.join(text_lines)
+    
+    except Exception as e:
+        print(f"ERROR converting to TXT: {e}")
+        return None
+
+
+@app.route("/download-caption", methods=["POST"])
+@limiter.limit("10 per minute")
+def download_caption():
+    """
+    Download caption file in the requested format and language.
+    Works with any platform that yt-dlp supports.
+    Supports TXT, SRT, and VTT formats.
+    """
+    data = request.get_json()
+    url = data.get("url")
+    language = data.get("language")
+    caption_format = data.get("format", "srt")  # Default to SRT
+    
+    print(f"\n=== CAPTION DOWNLOAD REQUEST ===")
+    print(f"URL: {url}")
+    print(f"Language: {language}")
+    print(f"Format: {caption_format}")
+    print(f"================================\n")
+    
+    if not url or not language:
+        return jsonify({"status": "error", "message": "Missing URL or language"}), 400
+    
+    try:
+        # Generate unique session ID for this download
+        session_id = str(uuid.uuid4())[:8]
+        
+        # Initialize progress tracking
+        download_progress[session_id] = {
+            'progress': 0,
+            'status': 'starting',
+            'message': 'Downloading caption...'
+        }
+        
+        # Output template for caption file
+        output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.%(ext)s")
+        
+        # For TXT format, download as VTT first, then convert
+        # yt-dlp doesn't support TXT natively
+        download_format = "vtt" if caption_format == "txt" else caption_format
+        
+        # Build yt-dlp command for caption download
+        command = [
+            "yt-dlp.exe",
+            url,
+            "--write-sub",              # Download subtitles
+            "--sub-lang", language,     # Specific language
+            "--sub-format", download_format,  # Download as VTT/SRT
+            "--skip-download",          # Don't download video
+            "--no-playlist",
+            "-o", output_template,
+            "--convert-subs", download_format  # Convert to requested format if needed
+        ]
+        
+        print(f"Running command: {' '.join(command)}")
+        
+        # Run download in background thread
+        def download_caption_thread():
+            try:
+                download_progress[session_id]['status'] = 'downloading'
+                download_progress[session_id]['message'] = 'Extracting caption...'
+                
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    encoding='utf-8',
+                    errors='replace'
+                )
+                
+                output = result.stdout + result.stderr
+                print(f"Caption download output:\n{output}")
+                
+                # Find the downloaded caption file
+                pattern = os.path.join(temp_downloads_path, f"{session_id}_*")
+                files = glob.glob(pattern)
+                
+                if not files:
+                    print(f"ERROR: No caption file found matching pattern: {pattern}")
+                    download_progress[session_id] = {
+                        'progress': 0,
+                        'status': 'error',
+                        'message': 'Caption file not found. The video may not have captions in the requested language.'
+                    }
+                    return
+                
+                # Get the caption file (should be only one)
+                caption_file = files[0]
+                original_filename = os.path.basename(caption_file)
+                print(f"Original caption filename: {original_filename}")
+                
+                # If user requested TXT format, convert VTT to plain text
+                if caption_format == "txt":
+                    print(f"📝 Converting caption to TXT format...")
+                    txt_content = convert_caption_to_txt(caption_file)
+                    
+                    if txt_content:
+                        # Create new TXT file
+                        txt_filename = original_filename.replace('.vtt', '.txt').replace('.srt', '.txt')
+                        txt_path = os.path.join(temp_downloads_path, txt_filename)
+                        
+                        with open(txt_path, 'w', encoding='utf-8') as f:
+                            f.write(txt_content)
+                        
+                        # Remove original VTT file
+                        os.remove(caption_file)
+                        
+                        caption_file = txt_path
+                        original_filename = txt_filename
+                        print(f"✅ Converted to TXT: {txt_filename}")
+                    else:
+                        print(f"ERROR: Failed to convert caption to TXT")
+                        download_progress[session_id] = {
+                            'progress': 0,
+                            'status': 'error',
+                            'message': 'Failed to convert caption to TXT format'
+                        }
+                        return
+                
+                # Sanitize filename
+                sanitized_filename = sanitize_filename(original_filename)
+                sanitized_path = os.path.join(temp_downloads_path, sanitized_filename)
+                
+                # Rename if needed
+                if original_filename != sanitized_filename:
+                    os.rename(caption_file, sanitized_path)
+                    print(f"Caption file renamed to: {sanitized_filename}")
+                else:
+                    sanitized_filename = original_filename
+                
+                # Update progress
+                download_progress[session_id] = {
+                    'progress': 100,
+                    'status': 'complete',
+                    'message': 'Caption download complete!',
+                    'filename': sanitized_filename
+                }
+                
+                print(f"✅ Caption download complete: {sanitized_filename}")
+                
+            except subprocess.TimeoutExpired:
+                print(f"ERROR: Caption download timed out for session {session_id}")
+                download_progress[session_id] = {
+                    'progress': 0,
+                    'status': 'error',
+                    'message': 'Caption download timed out'
+                }
+            except Exception as e:
+                print(f"ERROR in caption download thread: {type(e).__name__}: {str(e)}")
+                download_progress[session_id] = {
+                    'progress': 0,
+                    'status': 'error',
+                    'message': f'Caption download failed: {str(e)}'
+                }
+        
+        # Start download thread
+        thread = threading.Thread(target=download_caption_thread)
+        thread.start()
+        
+        return jsonify({
+            "status": "started",
+            "session_id": session_id,
+            "message": "Caption download started"
+        })
+        
+    except Exception as e:
+        print(f"ERROR starting caption download: {type(e).__name__}: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
 if __name__ == "__main__":
     # Start cleanup thread for automatic file deletion
     cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
