@@ -14,9 +14,8 @@ import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
-import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning } from "@phosphor-icons/react"
-import { toast } from "sonner"
-import { Toaster } from "@/components/ui/sonner"
+import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
+import { toast, Toaster } from "sonner"
 
 // Backend base URL detection.
 // In dev we proxy API calls through Vite, so we fall back to relative paths (empty base).
@@ -140,6 +139,7 @@ function HomePage() {
   const [captionsSelected, setCaptionsSelected] = useState(false)
   const [isCheckingCaptions, setIsCheckingCaptions] = useState(false)
   const [activeDownloadType, setActiveDownloadType] = useState<"video" | "audio" | "image" | "caption" | null>(null)
+  const [captionStatus, setCaptionStatus] = useState("")
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
@@ -172,6 +172,7 @@ function HomePage() {
       setCaptionsSelected(false)
       setIsCheckingCaptions(false)
       setActiveDownloadType(null)
+      setCaptionStatus("")
       // Reset available qualities and bitrates to defaults
       setAvailableQualities(QUALITY_OPTIONS)
       setAvailableBitrates(BITRATE_OPTIONS)
@@ -203,6 +204,7 @@ function HomePage() {
     setSelectedLanguage("")
     setCaptionsSelected(false)
     setAvailableLanguages([])
+  setCaptionStatus("")
 
     try {
       console.log('Fetching video info from:', `${API_URL}/video-info`)
@@ -316,6 +318,7 @@ function HomePage() {
     setSelectedCaptionFormat(null)
     setSelectedLanguage("")
     setAvailableLanguages([])
+    setCaptionStatus("")
   }
 
   const handleDownload = async () => {
@@ -326,6 +329,7 @@ function HomePage() {
     const downloadType = isVideo ? 'video' : isAudio ? 'audio' : 'thumbnail'
     const uiDownloadType: "video" | "audio" | "image" = isVideo ? 'video' : isAudio ? 'audio' : 'image'
 
+  setError("")
     setIsCheckingCaptions(false)
     setIsDownloading(true)
     setDownloadComplete(false)
@@ -368,6 +372,7 @@ function HomePage() {
       
     } catch (err) {
       console.error('Download error:', err)
+      setError(err instanceof Error ? err.message : 'Download failed')
       toast.error(err instanceof Error ? err.message : 'Download failed')
       setIsDownloading(false)
       setActiveDownloadType(null)
@@ -442,11 +447,22 @@ function HomePage() {
           }
           
           console.log('Download complete! Full response:', data)
+
+          const finishedType = activeDownloadType
           
-          setTimeout(async () => {
+          setTimeout(() => {
             setIsDownloading(false)
             setDownloadComplete(true)
             setActiveDownloadType(null)
+            if (finishedType === 'caption') {
+              setCaptionStatus('Caption downloaded successfully!')
+            }
+            
+            // Show success toast notification
+            toast.success('Download Complete!', {
+              description: 'Your file has been downloaded successfully.',
+              duration: 4000,
+            })
             
             // Trigger browser download
             if (data.filename) {
@@ -462,16 +478,27 @@ function HomePage() {
                 document.body.appendChild(link)
                 link.click()
                 document.body.removeChild(link)
-                
-                toast.success(`${videoInfo?.title || 'File'} downloaded successfully!`)
-                
               } catch (err) {
                 console.error('Download trigger error:', err)
-                toast.error('Failed to download file')
+                setError('Failed to download file')
+                toast.error('Download Failed', {
+                  description: 'Failed to download file. Please try again.',
+                  duration: 4000,
+                })
+                if (finishedType === 'caption') {
+                  setCaptionStatus('Failed to download caption file')
+                }
               }
             } else {
               console.error('No filename in response! Response:', data)
-              toast.error('Download completed but filename not found')
+              setError('Download completed but filename not found')
+              toast.error('Download Error', {
+                description: 'Download completed but filename not found.',
+                duration: 4000,
+              })
+              if (finishedType === 'caption') {
+                setCaptionStatus('Download completed but caption file was not found')
+              }
             }
           }, 500)
         }
@@ -491,7 +518,15 @@ function HomePage() {
           pollIntervalRef.current = null
         }
         console.error('Progress polling error:', err)
-        toast.error('Download failed')
+        const failedType = activeDownloadType
+        setError(err instanceof Error ? err.message : 'Download failed')
+        toast.error('Download Failed', {
+          description: err instanceof Error ? err.message : 'Download failed. Please try again.',
+          duration: 4000,
+        })
+        if (failedType === 'caption') {
+          setCaptionStatus('Failed to download caption')
+        }
         setIsDownloading(false)
         setActiveDownloadType(null)
       }
@@ -521,12 +556,14 @@ function HomePage() {
     if (availableLanguages.length > 0) {
       console.log('Caption languages already loaded')
       setIsCheckingCaptions(false)
+      setCaptionStatus('Caption languages already loaded.')
       return
     }
     
     // Start caption check with progress feedback
     setIsCheckingCaptions(true)
     setSelectedLanguage("")
+  setCaptionStatus('Checking for captions...')
     toast.info('Checking for captions...')
     
     try {
@@ -590,14 +627,16 @@ function HomePage() {
                 const topLanguages = selectTopLanguages(progressData.languages)
                 setAvailableLanguages(topLanguages)
                 if (topLanguages.length > 0) {
-                  toast.success(`Found captions in ${topLanguages.length} popular languages`)
+                  setCaptionStatus(`Found captions in ${topLanguages.length} popular languages.`)
+                  toast.success(`Found ${progressData.languages.length} caption languages!`)
                   console.log(`✓ Showing top languages:`, topLanguages.map((lang) => lang.code))
                 } else {
-                  toast.info('Captions available, but none match the popular language list')
+                  setCaptionStatus('Captions available, but none match the popular language list.')
                   console.log('✗ Captions found but no popular languages matched')
                 }
               } else {
                 setAvailableLanguages([])
+                setCaptionStatus('No captions available for this video.')
                 toast.info('No captions available for this video')
                 console.log('✗ No captions found')
               }
@@ -618,6 +657,7 @@ function HomePage() {
               pollIntervalRef.current = null
             }
             console.error('Caption check polling error:', err)
+            setCaptionStatus('Failed to check captions. Please try again.')
             toast.error('Failed to check captions')
             setIsCheckingCaptions(false)
             setDownloadProgress(null)
@@ -630,6 +670,7 @@ function HomePage() {
       
     } catch (err) {
       console.error('Error starting caption check:', err)
+      setCaptionStatus(err instanceof Error ? err.message : 'Failed to check captions')
       toast.error(err instanceof Error ? err.message : 'Failed to check captions')
       setIsCheckingCaptions(false)
       setDownloadProgress(null)
@@ -644,7 +685,8 @@ function HomePage() {
     setDownloadProgress(null)
     setDownloadComplete(false)
     setActiveDownloadType('caption')
-    toast.success('Starting caption download...')
+  setCaptionStatus('Starting caption download...')
+    toast.info('Starting caption download...')
 
     try {
       const response = await fetch(`${API_URL}/download-caption`, {
@@ -672,7 +714,9 @@ function HomePage() {
       }
     } catch (error) {
       console.error('Error downloading caption:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to download caption')
+      setCaptionStatus(error instanceof Error ? error.message : 'Failed to download caption')
+      setError(error instanceof Error ? error.message : 'Failed to download caption')
+      toast.error('Failed to download caption')
       setIsDownloading(false)
       setIsCheckingCaptions(false)
       setActiveDownloadType(null)
@@ -710,6 +754,11 @@ function HomePage() {
   const etaDisplay = downloadProgress && downloadProgress.timeRemainingSeconds > 0
     ? formatTimeRemaining(downloadProgress.timeRemainingSeconds)
     : '—'
+  const captionStatusTone = captionStatus
+    ? /fail|error|missing|not found/i.test(captionStatus)
+      ? 'error'
+      : 'info'
+    : null
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6 sm:space-y-8">
@@ -950,6 +999,12 @@ function HomePage() {
                             </Select>
                           </div>
 
+                            {captionStatus && (
+                              <p className={`text-sm ${captionStatusTone === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                                {captionStatus}
+                              </p>
+                            )}
+
                           {selectedLanguage && (
                             <motion.div
                               initial={{ opacity: 0, y: -10 }}
@@ -1010,7 +1065,7 @@ function HomePage() {
                 </AnimatePresence>
 
                 <AnimatePresence>
-                  {isDownloading && !isCheckingCaptions && (
+                  {(isDownloading || downloadComplete) && !isCheckingCaptions && downloadProgress && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -1021,11 +1076,39 @@ function HomePage() {
                       <Card className="border-2 bg-background/80 shadow-sm">
                         <div className="space-y-4 p-6">
                           <div className="flex items-start justify-between gap-4">
-                            <div className="space-y-1">
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Downloading</p>
-                              <p className="text-base font-semibold leading-tight">{downloadLabel}</p>
+                            <div className="flex items-center gap-2">
+                              {downloadComplete && (
+                                <motion.div
+                                  initial={{ scale: 0, rotate: -180 }}
+                                  animate={{ scale: 1, rotate: 0 }}
+                                  transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                                >
+                                  <CheckCircle weight="fill" size={20} className="text-foreground" />
+                                </motion.div>
+                              )}
+                              <div className="space-y-1">
+                                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                                  {downloadComplete ? "Complete" : "Downloading"}
+                                </p>
+                                <p className="text-base font-semibold leading-tight">{downloadLabel}</p>
+                              </div>
                             </div>
-                            <span className="text-sm font-semibold text-muted-foreground">{progressDisplay}%</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-muted-foreground">{progressDisplay}%</span>
+                              {downloadComplete && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 hover:bg-muted"
+                                  onClick={() => {
+                                    setDownloadComplete(false)
+                                    setDownloadProgress(null)
+                                  }}
+                                >
+                                  <X size={16} />
+                                </Button>
+                              )}
+                            </div>
                           </div>
 
                           <Progress value={progressPercentage} className="h-2" />
@@ -1036,16 +1119,28 @@ function HomePage() {
                               <p>{sizeDisplay}</p>
                             </div>
                             <div className="space-y-1">
-                              <p className="font-medium text-foreground">Speed</p>
+                              <p className="font-medium text-foreground">
+                                {downloadComplete ? "Average Speed" : "Speed"}
+                              </p>
                               <p>{speedDisplay}</p>
                             </div>
                             <div className="space-y-1">
-                              <p className="font-medium text-foreground">Time Remaining</p>
+                              <p className="font-medium text-foreground">
+                                {downloadComplete ? "Total Time" : "Time Remaining"}
+                              </p>
                               <p>{etaDisplay}</p>
                             </div>
                             <div className="space-y-1">
                               <p className="font-medium text-foreground">Status</p>
-                              <p>{!downloadProgress ? 'Starting...' : progressDisplay >= 99 ? 'Finalizing...' : 'Downloading...'}</p>
+                              <p>
+                                {downloadComplete 
+                                  ? 'Download Complete!' 
+                                  : !downloadProgress 
+                                    ? 'Starting...' 
+                                    : progressDisplay >= 99 
+                                      ? 'Finalizing...' 
+                                      : 'Downloading...'}
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -1064,8 +1159,8 @@ function HomePage() {
 function App() {
   return (
     <Router>
+      <Toaster position="top-center" richColors />
       <div className="min-h-screen bg-background flex flex-col">
-        <Toaster position="top-center" />
         <div className="flex-1 px-4 py-6 sm:p-8">
           <Routes>
             <Route path="/" element={<HomePage />} />
