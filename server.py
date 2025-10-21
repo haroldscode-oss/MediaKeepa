@@ -63,11 +63,11 @@ else:
 CORS(app, resources={r"/*": {"origins": allowed_origins, "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 print(f"🔐 CORS allowed origins: {', '.join(allowed_origins)}")
 
-# Rate Limiting - Generous limits for real users, blocks only extreme abuse
+# Rate Limiting - Generous for real users, blocks bots and extreme abuse
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["10000 per day", "500 per hour"],  # Very generous - normal users won't hit this
+    default_limits=["1000 per day", "200 per hour"],  # Realistic: normal users won't hit this, bots will
     storage_uri="memory://"
 )
 
@@ -476,7 +476,7 @@ def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
 
 @app.route("/download", methods=["POST"])
-@limiter.limit("100 per minute")  # Allow 100 downloads per minute - users can download as much as they want
+@limiter.limit("50 per minute")  # 50 downloads/min = plenty for real users, blocks bots
 def download():
     data = request.get_json()
     url = data.get("url")
@@ -712,7 +712,7 @@ def get_download_progress(session_id):
     return jsonify(download_progress[session_id])
 
 @app.route("/video-info", methods=["POST"])
-@limiter.limit("200 per minute")  # Allow 200 info requests per minute - users can paste many URLs
+@limiter.limit("100 per minute")  # 100 info requests/min = users can paste many URLs quickly
 def video_info():
     """Fetch video information including thumbnail using yt-dlp with caching"""
     data = request.get_json()
@@ -1609,7 +1609,7 @@ def perform_caption_check(session_id, url):
 
 
 @app.route("/check-captions", methods=["POST"])
-@limiter.limit("200 per minute")  # Allow 200 caption checks per minute
+@limiter.limit("100 per minute")  # 100 caption checks/min - more than enough
 def check_captions():
     """
     Check if video has captions - returns immediately with session_id for progress polling.
@@ -1700,7 +1700,7 @@ def convert_caption_to_txt(vtt_file_path):
 
 
 @app.route("/download-caption", methods=["POST"])
-@limiter.limit("100 per minute")  # Allow 100 caption downloads per minute
+@limiter.limit("50 per minute")  # 50 caption downloads/min - plenty for real users
 def download_caption():
     """
     Download caption file in the requested format and language.
