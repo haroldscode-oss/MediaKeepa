@@ -148,7 +148,12 @@ export function RecentUrls({ onUrlSelect }: RecentUrlsProps) {
   }
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ type: "spring", stiffness: 300, damping: 25 }}
+    >
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <Clock size={16} className="text-muted-foreground" />
@@ -159,9 +164,10 @@ export function RecentUrls({ onUrlSelect }: RecentUrlsProps) {
             {entries.map((entry) => (
               <motion.button
                 key={entry.url}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
                 onClick={() => onUrlSelect(entry.url)}
                 className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-muted/60 transition-colors text-left group"
               >

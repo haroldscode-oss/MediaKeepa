@@ -141,6 +141,7 @@ function HomePage() {
   const [isCheckingCaptions, setIsCheckingCaptions] = useState(false)
   const [activeDownloadType, setActiveDownloadType] = useState<"video" | "audio" | "image" | "caption" | null>(null)
   const [captionStatus, setCaptionStatus] = useState("")
+  const [isInputFocused, setIsInputFocused] = useState(false)
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
@@ -563,6 +564,7 @@ function HomePage() {
     ((isVideoFormat && selectedQuality) || 
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
+  const shouldShowRecentUrls = !url && !isLoading && !videoInfo && isInputFocused
 
   const handleCaptionsClick = async () => {
     setCaptionsSelected(true)
@@ -808,6 +810,8 @@ function HomePage() {
                 placeholder="Paste video URL here..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
+                onFocus={() => setIsInputFocused(true)}
+                onBlur={() => setIsInputFocused(false)}
                 ref={inputRef}
                 className="h-14 text-base pl-12 pr-12 border-2 focus-visible:ring-2 focus-visible:ring-accent"
               />
@@ -831,7 +835,11 @@ function HomePage() {
                 {error}
               </motion.p>
             )}
-            <RecentUrls onUrlSelect={handleRecentUrlSelect} />
+            <AnimatePresence>
+              {shouldShowRecentUrls && (
+                <RecentUrls onUrlSelect={handleRecentUrlSelect} />
+              )}
+            </AnimatePresence>
           </div>
 
           <AnimatePresence mode="wait">
