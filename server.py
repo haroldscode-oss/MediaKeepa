@@ -5,6 +5,7 @@ from flask_limiter.util import get_remote_address
 import subprocess
 import os
 import glob
+import socket
 import uuid
 import re
 import json
@@ -18,16 +19,49 @@ import secrets
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
+DEFAULT_PORT = int(os.environ.get("PORT", "8080"))
 
 if not DIST_FOLDER.exists():
     print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
 
 app = Flask(__name__, static_folder=str(DIST_FOLDER), static_url_path="")
 
-# CORS Configuration - CHANGE THIS TO YOUR ACTUAL DOMAIN for production!
-# For development, use localhost. For production, replace with your domain.
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5000,http://127.0.0.1:5000").split(",")
-CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS, "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
+# CORS Configuration - defaults cover localhost and common LAN dev setups.
+def detect_lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return None
+
+
+default_origins = {
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
+
+lan_ip_override = os.environ.get("DEV_HOST_IP")
+lan_ip = lan_ip_override or detect_lan_ip()
+if lan_ip:
+    default_origins.update({
+        f"http://{lan_ip}:5000",
+        f"http://{lan_ip}:{DEFAULT_PORT}",
+        f"http://{lan_ip}:5173",
+    })
+
+allowed_origins_env = os.environ.get("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+else:
+    allowed_origins = sorted(default_origins)
+
+CORS(app, resources={r"/*": {"origins": allowed_origins, "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
+print(f"🔐 CORS allowed origins: {', '.join(allowed_origins)}")
 
 # Rate Limiting - Prevents abuse and spam
 limiter = Limiter(
@@ -1844,4 +1878,4 @@ if __name__ == "__main__":
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
     
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=DEFAULT_PORT)

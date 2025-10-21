@@ -7,6 +7,7 @@ import createIconImportProxy from "@github/spark/vitePhosphorIconProxyPlugin";
 import { resolve } from 'path'
 
 const projectRoot = process.env.PROJECT_ROOT || import.meta.dirname
+const devApiTarget = process.env.DEV_API_TARGET || "http://127.0.0.1:8080"
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -23,6 +24,54 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173
+    host: true,
+    port: 5000,
+    strictPort: true,
+    proxy: {
+      '/video-info': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/download': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/download-progress': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/download-caption': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/check-captions': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/ping': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/get-file': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/thumbnail': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/stream-video': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/get-stream-session': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
+      '/proxy-video': {
+        target: devApiTarget,
+        changeOrigin: true
+      }
+    }
   }
 });

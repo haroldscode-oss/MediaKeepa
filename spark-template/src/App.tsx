@@ -18,12 +18,20 @@ import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning } from "@phosp
 import { toast } from "sonner"
 import { Toaster } from "@/components/ui/sonner"
 
-// Get API URL from environment variable (defaults to same-origin backend).
-// When the UI is opened via http://localhost we still call the Flask server on 127.0.0.1
-// to avoid conflicts with stray dev servers bound to IPv6 localhost.
+// Backend base URL detection.
+// In dev we proxy API calls through Vite, so we fall back to relative paths (empty base).
 const runtimeOrigin = window.location.origin
-const isLocalhost = runtimeOrigin.includes("localhost")
-const API_URL = import.meta.env.VITE_API_URL || (isLocalhost ? "http://127.0.0.1:5000" : runtimeOrigin)
+const runtimeUrl = new URL(runtimeOrigin)
+const isLocalhost =
+  runtimeUrl.hostname.includes("localhost") ||
+  runtimeUrl.hostname === "127.0.0.1" ||
+  runtimeUrl.hostname.endsWith(".local")
+const resolvedHost = isLocalhost ? "127.0.0.1" : runtimeUrl.hostname
+const devApiUrl = import.meta.env.VITE_DEV_API_URL
+const defaultApiPort = import.meta.env.VITE_API_PORT || runtimeUrl.port || ""
+const portSegment = defaultApiPort ? `:${defaultApiPort}` : ""
+const productionBase = `${runtimeUrl.protocol}//${resolvedHost}${portSegment}`
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? devApiUrl || "" : productionBase)
 
 type FormatType = "mp4" | "webm" | "mkv" | "mp3" | "m4a" | "flac" | "jpg" | "png" | "webp"
 type Quality = "8K" | "4K" | "2K" | "1440p" | "1080p" | "720p" | "480p" | "360p" | "240p" | "144p"
@@ -40,6 +48,47 @@ const IMAGE_FORMATS: FormatType[] = ["png", "jpg", "webp"]
 const CAPTION_FORMATS: CaptionFormat[] = ["txt", "srt", "vtt"]
 const QUALITY_OPTIONS: Quality[] = ["8K", "4K", "2K", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
 const BITRATE_OPTIONS: Bitrate[] = ["320kbps", "256kbps", "192kbps", "160kbps", "128kbps", "96kbps", "64kbps"]
+const POPULAR_LANGUAGE_CODES = ["en", "es", "hi", "pt", "ru", "ja", "de", "fr", "it", "ko"] as const
+
+const selectTopLanguages = (languages: Language[]): Language[] => {
+  if (!languages.length) {
+    return []
+  }
+
+  const prioritized: Language[] = []
+  const taken = new Set<string>()
+
+  const normalize = (code: string) => {
+    const lower = code.toLowerCase()
+    const [base] = lower.split('-')
+    return { lower, base }
+  }
+
+  for (const code of POPULAR_LANGUAGE_CODES) {
+    const match = languages.find((lang) => {
+      if (taken.has(lang.code)) {
+        return false
+      }
+      const normalized = normalize(lang.code)
+      return normalized.lower === code || normalized.base === code
+    })
+
+    if (match) {
+      prioritized.push(match)
+      taken.add(match.code)
+
+      if (prioritized.length >= POPULAR_LANGUAGE_CODES.length) {
+        break
+      }
+    }
+  }
+
+  if (prioritized.length === 0) {
+    return languages.slice(0, POPULAR_LANGUAGE_CODES.length)
+  }
+
+  return prioritized
+}
 
 type VideoInfo = {
   title: string
@@ -150,6 +199,10 @@ function HomePage() {
     setSelectedBitrate(null)
     setIsCheckingCaptions(false)
     setActiveDownloadType(null)
+    setSelectedCaptionFormat(null)
+    setSelectedLanguage("")
+    setCaptionsSelected(false)
+    setAvailableLanguages([])
 
     try {
       console.log('Fetching video info from:', `${API_URL}/video-info`)
@@ -182,7 +235,10 @@ function HomePage() {
       }
       
       // Reset caption state - will be loaded when user clicks Caption tab
-      setAvailableLanguages([])
+  setAvailableLanguages([])
+  setSelectedCaptionFormat(null)
+  setSelectedLanguage("")
+  setCaptionsSelected(false)
       console.log('Caption tab will be checked on-demand when user clicks it')
 
       // ALWAYS show ALL qualities and bitrates regardless of detection
@@ -246,7 +302,7 @@ function HomePage() {
   }
 
   const handleTabChange = (value: string) => {
-    // Reset download state when switching between Video/Audio/Image tabs
+    // Reset download state when switching tabs
     setDownloadComplete(false)
     setDownloadProgress(null)
     setSelectedFormat(null)
@@ -254,6 +310,12 @@ function HomePage() {
     setSelectedBitrate(null)
     setActiveDownloadType(null)
     setIsCheckingCaptions(false)
+
+    // Clear caption-specific selections when navigating between tabs
+    setCaptionsSelected(false)
+    setSelectedCaptionFormat(null)
+    setSelectedLanguage("")
+    setAvailableLanguages([])
   }
 
   const handleDownload = async () => {
@@ -525,9 +587,15 @@ function HomePage() {
               setDownloadProgress(null)
               
               if (progressData.has_captions && progressData.languages) {
-                setAvailableLanguages(progressData.languages)
-                toast.success(`Found ${progressData.languages.length} caption languages!`)
-                console.log(`✓ Found ${progressData.languages.length} languages:`, progressData.languages)
+                const topLanguages = selectTopLanguages(progressData.languages)
+                setAvailableLanguages(topLanguages)
+                if (topLanguages.length > 0) {
+                  toast.success(`Found captions in ${topLanguages.length} popular languages`)
+                  console.log(`✓ Showing top languages:`, topLanguages.map((lang) => lang.code))
+                } else {
+                  toast.info('Captions available, but none match the popular language list')
+                  console.log('✗ Captions found but no popular languages matched')
+                }
               } else {
                 setAvailableLanguages([])
                 toast.info('No captions available for this video')
