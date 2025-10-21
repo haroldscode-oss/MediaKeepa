@@ -12,6 +12,7 @@ import { FormatOption } from "@/components/FormatOption"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
+import { RecentUrls, addRecentUrl } from "@/components/RecentUrls"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
 import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
@@ -143,6 +144,7 @@ function HomePage() {
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
   const formatTimeRemaining = (seconds: number) => {
     if (!seconds || seconds < 1) {
@@ -188,6 +190,22 @@ function HomePage() {
       }
     }
   }, [])
+
+  const handleClearUrl = () => {
+    setUrl("")
+    setError("")
+    inputRef.current?.focus()
+  }
+
+  const handleRecentUrlSelect = (selectedUrl: string) => {
+    if (selectedUrl === url) {
+      fetchVideoInfo(selectedUrl)
+    } else {
+      setUrl(selectedUrl)
+    }
+
+    inputRef.current?.focus()
+  }
 
   const fetchVideoInfo = async (videoUrl: string) => {
     setIsLoading(true)
@@ -274,6 +292,11 @@ function HomePage() {
       })
 
       console.log('Video info loaded successfully:', data.title)
+
+      addRecentUrl({
+        url: videoUrl,
+        title: data.title || 'Untitled Video'
+      })
     } catch (err) {
       console.error('Error fetching video info:', err)
       setError(err instanceof Error ? err.message : "Failed to fetch media information. Please check the URL and try again.")
@@ -785,8 +808,19 @@ function HomePage() {
                 placeholder="Paste video URL here..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                className="h-14 text-base pl-12 pr-5 border-2 focus-visible:ring-2 focus-visible:ring-accent"
+                ref={inputRef}
+                className="h-14 text-base pl-12 pr-12 border-2 focus-visible:ring-2 focus-visible:ring-accent"
               />
+              {url && (
+                <button
+                  type="button"
+                  onClick={handleClearUrl}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  aria-label="Clear URL"
+                >
+                  <X size={16} weight="bold" />
+                </button>
+              )}
             </div>
             {error && (
               <motion.p
@@ -797,6 +831,7 @@ function HomePage() {
                 {error}
               </motion.p>
             )}
+            <RecentUrls onUrlSelect={handleRecentUrlSelect} />
           </div>
 
           <AnimatePresence mode="wait">
