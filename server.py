@@ -63,11 +63,11 @@ else:
 CORS(app, resources={r"/*": {"origins": allowed_origins, "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type"]}})
 print(f"🔐 CORS allowed origins: {', '.join(allowed_origins)}")
 
-# Rate Limiting - Prevents abuse and spam
+# Rate Limiting - Generous limits for real users, blocks only extreme abuse
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["10000 per day", "500 per hour"],  # Very generous - normal users won't hit this
     storage_uri="memory://"
 )
 
@@ -476,7 +476,7 @@ def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
 
 @app.route("/download", methods=["POST"])
-@limiter.limit("10 per minute")  # Limit to 10 downloads per minute per IP
+@limiter.limit("100 per minute")  # Allow 100 downloads per minute - users can download as much as they want
 def download():
     data = request.get_json()
     url = data.get("url")
@@ -712,7 +712,7 @@ def get_download_progress(session_id):
     return jsonify(download_progress[session_id])
 
 @app.route("/video-info", methods=["POST"])
-@limiter.limit("30 per minute")  # Limit to 30 info requests per minute per IP
+@limiter.limit("200 per minute")  # Allow 200 info requests per minute - users can paste many URLs
 def video_info():
     """Fetch video information including thumbnail using yt-dlp with caching"""
     data = request.get_json()
@@ -1609,7 +1609,7 @@ def perform_caption_check(session_id, url):
 
 
 @app.route("/check-captions", methods=["POST"])
-@limiter.limit("20 per minute")
+@limiter.limit("200 per minute")  # Allow 200 caption checks per minute
 def check_captions():
     """
     Check if video has captions - returns immediately with session_id for progress polling.
@@ -1700,7 +1700,7 @@ def convert_caption_to_txt(vtt_file_path):
 
 
 @app.route("/download-caption", methods=["POST"])
-@limiter.limit("10 per minute")
+@limiter.limit("100 per minute")  # Allow 100 caption downloads per minute
 def download_caption():
     """
     Download caption file in the requested format and language.
