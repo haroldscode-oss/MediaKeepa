@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card } from "@/components/ui/card"
+import { Progress } from "@/components/ui/progress"
 import { ShimmerText } from "@/components/ShimmerText"
 import { FormatOption } from "@/components/FormatOption"
 import { ThemeToggle } from "@/components/ThemeToggle"
@@ -13,7 +14,7 @@ import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
-import { Play, MusicNote, Image, DownloadSimple, CheckCircle, ClosedCaptioning } from "@phosphor-icons/react"
+import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning } from "@phosphor-icons/react"
 import { toast } from "sonner"
 import { Toaster } from "@/components/ui/sonner"
 
@@ -88,9 +89,20 @@ function HomePage() {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("")
   const [availableLanguages, setAvailableLanguages] = useState<Language[]>([])
   const [captionsSelected, setCaptionsSelected] = useState(false)
+  const [isCheckingCaptions, setIsCheckingCaptions] = useState(false)
+  const [activeDownloadType, setActiveDownloadType] = useState<"video" | "audio" | "image" | "caption" | null>(null)
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
+
+  const formatTimeRemaining = (seconds: number) => {
+    if (!seconds || seconds < 1) {
+      return "Calculating..."
+    }
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = Math.max(seconds % 60, 0)
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
+  }
 
   useEffect(() => {
     if (url.length > 10) {
@@ -109,9 +121,11 @@ function HomePage() {
       setSelectedLanguage("")
       setSelectedCaptionFormat(null)
       setCaptionsSelected(false)
+      setIsCheckingCaptions(false)
+      setActiveDownloadType(null)
       // Reset available qualities and bitrates to defaults
-  setAvailableQualities(QUALITY_OPTIONS)
-  setAvailableBitrates(BITRATE_OPTIONS)
+      setAvailableQualities(QUALITY_OPTIONS)
+      setAvailableBitrates(BITRATE_OPTIONS)
     }
   }, [url])
 
@@ -134,6 +148,8 @@ function HomePage() {
     setSelectedFormat(null)
     setSelectedQuality(null)
     setSelectedBitrate(null)
+    setIsCheckingCaptions(false)
+    setActiveDownloadType(null)
 
     try {
       console.log('Fetching video info from:', `${API_URL}/video-info`)
@@ -215,6 +231,7 @@ function HomePage() {
     // Reset download complete state when user changes format
     setDownloadComplete(false)
     setDownloadProgress(null)
+    setActiveDownloadType(null)
     
     if (VIDEO_FORMATS.includes(format)) {
       setSelectedQuality(null)
@@ -235,22 +252,26 @@ function HomePage() {
     setSelectedFormat(null)
     setSelectedQuality(null)
     setSelectedBitrate(null)
+    setActiveDownloadType(null)
+    setIsCheckingCaptions(false)
   }
 
   const handleDownload = async () => {
     if (!selectedFormat || !url) return
     
+    const isVideo = VIDEO_FORMATS.includes(selectedFormat)
+    const isAudio = AUDIO_FORMATS.includes(selectedFormat)
+    const downloadType = isVideo ? 'video' : isAudio ? 'audio' : 'thumbnail'
+    const uiDownloadType: "video" | "audio" | "image" = isVideo ? 'video' : isAudio ? 'audio' : 'image'
+
+    setIsCheckingCaptions(false)
     setIsDownloading(true)
     setDownloadComplete(false)
     setDownloadProgress(null)
+    setActiveDownloadType(uiDownloadType)
     
     try {
       console.log('Starting download:', { url, format: selectedFormat, quality: selectedQuality, bitrate: selectedBitrate })
-      
-      // Determine download type
-  const isVideo = VIDEO_FORMATS.includes(selectedFormat)
-  const isAudio = AUDIO_FORMATS.includes(selectedFormat)
-      const downloadType = isVideo ? 'video' : isAudio ? 'audio' : 'thumbnail'
       
       // Start download
       const response = await fetch(`${API_URL}/download`, {
@@ -287,6 +308,8 @@ function HomePage() {
       console.error('Download error:', err)
       toast.error(err instanceof Error ? err.message : 'Download failed')
       setIsDownloading(false)
+      setActiveDownloadType(null)
+      setDownloadProgress(null)
     }
   }
 
@@ -309,10 +332,10 @@ function HomePage() {
         const progress = parseFloat(data.progress) || 0
         const status = data.status
         
-        // Extract file size info
-        let downloadedMB = 0
-        let totalMB = 0
-        let speedMBps = 0
+    // Extract file size info
+    let downloadedMB = 0
+    let totalMB = 0
+    let speedMBps = 0
         
         if (data.file_size) {
           // Parse "12.5 MB / 25.0 MB" format
@@ -344,7 +367,7 @@ function HomePage() {
         setDownloadProgress({
           percentage: progress,
           downloadedMB,
-          totalMB: totalMB || 100, // Default to 100 if not available
+          totalMB,
           speedMBps,
           timeRemainingSeconds,
         })
@@ -361,6 +384,7 @@ function HomePage() {
           setTimeout(async () => {
             setIsDownloading(false)
             setDownloadComplete(true)
+            setActiveDownloadType(null)
             
             // Trigger browser download
             if (data.filename) {
@@ -407,6 +431,7 @@ function HomePage() {
         console.error('Progress polling error:', err)
         toast.error('Download failed')
         setIsDownloading(false)
+        setActiveDownloadType(null)
       }
     }, 500) // Poll every 500ms
   }
@@ -423,15 +448,23 @@ function HomePage() {
     setCaptionsSelected(true)
     setDownloadProgress(null)
     setDownloadComplete(false)
+    setActiveDownloadType(null)
+
+    if (pollIntervalRef.current !== null) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
     
     // If languages already loaded, skip the check
     if (availableLanguages.length > 0) {
       console.log('Caption languages already loaded')
+      setIsCheckingCaptions(false)
       return
     }
     
     // Start caption check with progress feedback
-    setIsDownloading(true) // Shows loading state
+    setIsCheckingCaptions(true)
+    setSelectedLanguage("")
     toast.info('Checking for captions...')
     
     try {
@@ -488,7 +521,7 @@ function HomePage() {
                 pollIntervalRef.current = null
               }
               
-              setIsDownloading(false)
+              setIsCheckingCaptions(false)
               setDownloadProgress(null)
               
               if (progressData.has_captions && progressData.languages) {
@@ -518,7 +551,7 @@ function HomePage() {
             }
             console.error('Caption check polling error:', err)
             toast.error('Failed to check captions')
-            setIsDownloading(false)
+            setIsCheckingCaptions(false)
             setDownloadProgress(null)
           }
         }, 500) // Poll every 500ms
@@ -530,28 +563,29 @@ function HomePage() {
     } catch (err) {
       console.error('Error starting caption check:', err)
       toast.error(err instanceof Error ? err.message : 'Failed to check captions')
-      setIsDownloading(false)
+      setIsCheckingCaptions(false)
       setDownloadProgress(null)
     }
   }
 
   const handleCaptionDownload = async () => {
-    if (!selectedLanguage || !url) return
+    if (!selectedLanguage || !url || !selectedCaptionFormat) return
 
+    setIsCheckingCaptions(false)
     setIsDownloading(true)
     setDownloadProgress(null)
     setDownloadComplete(false)
+    setActiveDownloadType('caption')
     toast.success('Starting caption download...')
 
     try {
-      // Start caption download
       const response = await fetch(`${API_URL}/download-caption`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url, 
-          language: selectedLanguage, 
-          format: selectedCaptionFormat 
+        body: JSON.stringify({
+          url,
+          language: selectedLanguage,
+          format: selectedCaptionFormat
         })
       })
 
@@ -560,61 +594,54 @@ function HomePage() {
       }
 
       const data = await response.json()
-      
+
       if (data.status === 'started' && data.session_id) {
-        // Poll for download progress
-        const sessionId = data.session_id
-        const pollInterval = setInterval(async () => {
-          try {
-            const progressResponse = await fetch(`${API_URL}/download-progress/${sessionId}`)
-            const progressData = await progressResponse.json()
-
-            if (progressData.status === 'complete' && progressData.filename) {
-              clearInterval(pollInterval)
-              setDownloadComplete(true)
-              toast.success('Caption downloaded!')
-
-              // Download the file
-              const fileUrl = `${API_URL}/get-file/${progressData.filename}`
-              const link = document.createElement('a')
-              link.href = fileUrl
-              link.download = progressData.filename
-              link.click()
-
-              setIsDownloading(false)
-            } else if (progressData.status === 'error') {
-              clearInterval(pollInterval)
-              toast.error(progressData.message || 'Caption download failed')
-              setIsDownloading(false)
-            } else {
-              // Update progress
-              setDownloadProgress(progressData.progress || 0)
-            }
-          } catch (error) {
-            clearInterval(pollInterval)
-            console.error('Error polling progress:', error)
-            toast.error('Failed to check download progress')
-            setIsDownloading(false)
-          }
-        }, 500) // Poll every 500ms
-
-        // Set timeout to stop polling after 2 minutes
-        setTimeout(() => {
-          clearInterval(pollInterval)
-          if (isDownloading) {
-            toast.error('Caption download timed out')
-            setIsDownloading(false)
-          }
-        }, 120000)
+        const newSessionId = data.session_id
+        setSessionId(newSessionId)
+        pollDownloadProgress(newSessionId)
       } else {
         throw new Error('Invalid response from server')
       }
     } catch (error) {
       console.error('Error downloading caption:', error)
-      toast.error('Failed to download caption')
+      toast.error(error instanceof Error ? error.message : 'Failed to download caption')
       setIsDownloading(false)
+      setIsCheckingCaptions(false)
+      setActiveDownloadType(null)
+      setDownloadProgress(null)
     }
   }
+
+  const selectedLanguageName = selectedLanguage
+    ? availableLanguages.find((lang) => lang.code === selectedLanguage)?.name
+    : undefined
+
+  const downloadLabel = (() => {
+    switch (activeDownloadType) {
+      case 'video':
+        return `${selectedFormat?.toUpperCase() ?? 'VIDEO'}${selectedQuality ? ` • ${selectedQuality}` : ''}`
+      case 'audio':
+        return `${selectedFormat?.toUpperCase() ?? 'AUDIO'}${selectedBitrate ? ` • ${selectedBitrate}` : ''}`
+      case 'image':
+        return `${selectedFormat?.toUpperCase() ?? 'IMAGE'} download`
+      case 'caption':
+        return `${selectedCaptionFormat?.toUpperCase() ?? 'Caption'}${selectedLanguageName ? ` • ${selectedLanguageName}` : ''}`
+      default:
+        return 'Preparing download'
+    }
+  })()
+
+  const progressPercentage = downloadProgress?.percentage ?? 0
+  const progressDisplay = Number.isFinite(progressPercentage) ? Math.round(progressPercentage) : 0
+  const sizeDisplay = downloadProgress && downloadProgress.totalMB > 0
+    ? `${downloadProgress.downloadedMB.toFixed(1)} MB / ${downloadProgress.totalMB.toFixed(1)} MB`
+    : 'Calculating...'
+  const speedDisplay = downloadProgress && downloadProgress.speedMBps > 0
+    ? `${downloadProgress.speedMBps.toFixed(2)} MB/s`
+    : '—'
+  const etaDisplay = downloadProgress && downloadProgress.timeRemainingSeconds > 0
+    ? formatTimeRemaining(downloadProgress.timeRemainingSeconds)
+    : '—'
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6 sm:space-y-8">
@@ -902,76 +929,55 @@ function HomePage() {
                 </AnimatePresence>
 
                 <AnimatePresence>
-                  {(isDownloading || downloadComplete) && downloadProgress && (
+                  {isCheckingCaptions && (
                     <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      className="space-y-4"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="flex justify-center py-8"
                     >
-                      <Card className="p-6 border-2">
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              {downloadComplete && (
-                                <motion.div
-                                  initial={{ scale: 0, rotate: -180 }}
-                                  animate={{ scale: 1, rotate: 0 }}
-                                  transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                                >
-                                  <CheckCircle weight="fill" size={20} className="text-foreground" />
-                                </motion.div>
-                              )}
-                              <span className="font-medium text-foreground">
-                                {downloadComplete ? "Download Complete!" : "Downloading..."}
-                              </span>
+                      <ShimmerText text="Checking for captions..." />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {isDownloading && !isCheckingCaptions && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      transition={{ duration: 0.25 }}
+                      className="py-6"
+                    >
+                      <Card className="border-2 bg-background/80 shadow-sm">
+                        <div className="space-y-4 p-6">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="space-y-1">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Downloading</p>
+                              <p className="text-base font-semibold leading-tight">{downloadLabel}</p>
                             </div>
-                            <span className="font-semibold text-foreground">
-                              {Math.round(downloadProgress.percentage)}%
-                            </span>
+                            <span className="text-sm font-semibold text-muted-foreground">{progressDisplay}%</span>
                           </div>
 
-                          <div className="relative h-3 bg-muted rounded-full overflow-hidden">
-                            <motion.div
-                              className={downloadComplete 
-                                ? "absolute inset-y-0 left-0 rounded-full bg-foreground"
-                                : "absolute inset-y-0 left-0 rounded-full bg-foreground progress-bar-shimmer"
-                              }
-                              initial={{ width: 0 }}
-                              animate={{ 
-                                width: `${downloadProgress.percentage}%`
-                              }}
-                              transition={{ 
-                                width: { duration: downloadComplete ? 0.3 : 0.1, ease: downloadComplete ? "easeOut" : "linear" }
-                              }}
-                            />
-                          </div>
+                          <Progress value={progressPercentage} className="h-2" />
 
-                          <div className="grid grid-cols-2 gap-4 pt-2">
+                          <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
                             <div className="space-y-1">
-                              <p className="text-xs text-muted-foreground">File Size</p>
-                              <p className="text-sm font-medium">
-                                {downloadProgress.downloadedMB.toFixed(1)} MB / {downloadProgress.totalMB.toFixed(1)} MB
-                              </p>
+                              <p className="font-medium text-foreground">Size</p>
+                              <p>{sizeDisplay}</p>
                             </div>
                             <div className="space-y-1">
-                              <p className="text-xs text-muted-foreground">
-                                {downloadComplete ? "Average Speed" : "Speed"}
-                              </p>
-                              <p className="text-sm font-medium">
-                                {downloadProgress.speedMBps.toFixed(1)} MB/s
-                              </p>
+                              <p className="font-medium text-foreground">Speed</p>
+                              <p>{speedDisplay}</p>
                             </div>
-                            <div className="space-y-1 col-span-2">
-                              <p className="text-xs text-muted-foreground">
-                                {downloadComplete ? "Total Time" : "Time Remaining"}
-                              </p>
-                              <p className="text-sm font-medium">
-                                {downloadComplete 
-                                  ? `${Math.ceil(downloadProgress.timeRemainingSeconds)} seconds`
-                                  : `${Math.ceil(downloadProgress.timeRemainingSeconds)} seconds left`
-                                }
-                              </p>
+                            <div className="space-y-1">
+                              <p className="font-medium text-foreground">Time Remaining</p>
+                              <p>{etaDisplay}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="font-medium text-foreground">Status</p>
+                              <p>{!downloadProgress ? 'Starting...' : progressDisplay >= 99 ? 'Finalizing...' : 'Downloading...'}</p>
                             </div>
                           </div>
                         </div>
