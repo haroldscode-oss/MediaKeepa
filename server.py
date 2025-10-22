@@ -297,16 +297,20 @@ temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
 # Create temp folder if it doesn't exist
 if not os.path.exists(temp_downloads_path):
     os.makedirs(temp_downloads_path)
-else:
-    # Clean up any leftover files from previous runs on startup
-    try:
+
+# Clean up any leftover files from previous runs on startup (always run this)
+try:
+    if os.path.exists(temp_downloads_path):
         for filename in os.listdir(temp_downloads_path):
             file_path = os.path.join(temp_downloads_path, filename)
             if os.path.isfile(file_path):
                 os.remove(file_path)
         print("🧹 Startup cleanup: Cleared temp_downloads folder")
-    except Exception as e:
-        print(f"⚠️  Startup cleanup warning: {e}")
+    # ALWAYS clear cache on startup to ensure consistency
+    video_cache.clear()
+    print("🧹 Startup cleanup: Cleared video cache")
+except Exception as e:
+    print(f"⚠️  Startup cleanup warning: {e}")
 
 def perform_download(session_id, url, format_type, quality, output_template, command, cache_entry=None):
     """
@@ -813,19 +817,28 @@ def video_info():
     if cache_entry:
         if time.time() - cache_entry.get("timestamp", 0) < CACHE_DURATION:
             cached_info = cache_entry.get("info", {})
-            print(f"✓ Using cached data for: {url[:50]}...")
             
-            # 🐛 DEBUG: Check if cached thumbnail file exists
+            # ✅ VALIDATION: Check if cached thumbnail file still exists
+            thumbnail_valid = True
             if cached_info.get("thumbnail") and cached_info["thumbnail"].startswith("/thumbnail/"):
                 thumb_filename = cached_info["thumbnail"].replace("/thumbnail/", "")
                 thumb_path = os.path.join(temp_downloads_path, thumb_filename)
-                file_exists = os.path.exists(thumb_path)
-                print(f"🐛 DEBUG Cache: thumbnail={thumb_filename}, exists={file_exists}")
-                if not file_exists:
-                    print(f"⚠️ WARNING: Cached thumbnail missing! Path: {thumb_path}")
-                    print(f"⚠️ Available files: {os.listdir(temp_downloads_path)}")
+                thumbnail_valid = os.path.exists(thumb_path)
+                
+                if not thumbnail_valid:
+                    print(f"⚠️ Cache invalidated: Thumbnail file missing for {url[:50]}...")
+                    print(f"   Missing file: {thumb_filename}")
+                    # Thumbnail deleted (cleanup or restart) - invalidate cache and re-fetch
+                    del video_cache[cache_key]
+                    cache_entry = None
+                else:
+                    print(f"✓ Using cached data for: {url[:50]}... (thumbnail verified)")
+            else:
+                print(f"✓ Using cached data for: {url[:50]}...")
             
-            return jsonify(cached_info)
+            # Only return cached data if thumbnail is valid
+            if thumbnail_valid:
+                return jsonify(cached_info)
         else:
             # Cache expired, remove it
             del video_cache[cache_key]
