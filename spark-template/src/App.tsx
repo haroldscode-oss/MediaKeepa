@@ -16,7 +16,7 @@ import { RecentUrls, addRecentUrl } from "@/components/RecentUrls"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
 import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
-import { toast, Toaster } from "sonner"
+import { toast } from "sonner"
 
 // Backend base URL detection.
 // In dev we proxy API calls through Vite, so we fall back to relative paths (empty base).
@@ -1202,7 +1202,6 @@ function HomePage() {
 function App() {
   return (
     <Router>
-      <Toaster position="bottom-right" />
       <div className="min-h-screen bg-background flex flex-col">
         <div className="flex-1 px-4 py-6 sm:p-8">
           <Routes>
