@@ -1156,11 +1156,26 @@ function HomePage() {
                             </div>
                           </div>
 
-                          <Progress value={progressPercentage} className="h-2" />
+                          <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+                            <motion.div
+                              className="absolute inset-0 bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%]"
+                              style={{ width: `${progressPercentage}%` }}
+                              animate={{
+                                backgroundPosition: ['0% 0%', '100% 0%']
+                              }}
+                              transition={{
+                                backgroundPosition: {
+                                  duration: 1.5,
+                                  repeat: Infinity,
+                                  ease: 'linear'
+                                }
+                              }}
+                            />
+                          </div>
 
                           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
                             <div className="space-y-1">
-                              <p className="font-medium text-foreground">Size</p>
+                              <p className="font-medium text-foreground">File Size</p>
                               <p>{sizeDisplay}</p>
                             </div>
                             <div className="space-y-1">
@@ -1170,13 +1185,11 @@ function HomePage() {
                               <p>{speedDisplay}</p>
                             </div>
                             <div className="space-y-1">
-                              <p className="font-medium text-foreground">
-                                {downloadComplete ? "Total Time" : "Time Remaining"}
-                              </p>
+                              <p className="font-medium text-foreground">Total Time</p>
                               <p>{etaDisplay}</p>
                             </div>
                             <div className="space-y-1">
-                              <p className="font-medium text-foreground">Status</p>
+                              <p className="font-medium text-foreground">Current Status</p>
                               <p>
                                 {downloadComplete 
                                   ? 'Download Complete!' 
