@@ -15,7 +15,9 @@ import time
 from functools import lru_cache
 import hashlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import secrets
+import atexit
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
@@ -77,6 +79,11 @@ CACHE_DURATION = 3600  # 1 hour in seconds
 
 # In-memory storage for download progress tracking
 download_progress = {}
+
+# Dedicated executor so that heavy TikTok thumbnail work does not block the Flask request
+# thread; having a small worker pool protects the server from being overwhelmed.
+download_executor = ThreadPoolExecutor(max_workers=3)
+atexit.register(lambda: download_executor.shutdown(wait=False))
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
@@ -301,13 +308,110 @@ else:
     except Exception as e:
         print(f"⚠️  Startup cleanup warning: {e}")
 
-def perform_download(session_id, url, format_type, quality, output_template, command):
+def perform_download(session_id, url, format_type, quality, output_template, command, cache_entry=None):
     """
     Perform the actual download in a background thread and track progress
     """
     try:
         download_progress[session_id]['status'] = 'downloading'
         download_progress[session_id]['message'] = 'Downloading...'
+        
+        # Handle TikTok thumbnails specially - download the high-quality custom thumbnail
+        image_formats = ["png", "webp", "jpg", "jpeg"]
+        is_image_format = format_type.lower() in image_formats
+        
+        if is_image_format and "tiktok.com" in url:
+            try:
+                print(f"🎯 Downloading TikTok custom thumbnail...")
+                
+                video_data = None
+                thumbnail_url = None
+                best_thumbnail_id = None
+                video_title = "thumbnail"
+                used_cached_metadata = False
+
+                if cache_entry:
+                    print("✅ Using cached TikTok metadata for thumbnail download")
+                    video_data = cache_entry.get("raw_metadata")
+                    thumbnail_url = cache_entry.get("thumbnail_url")
+                    best_thumbnail_id = cache_entry.get("thumbnail_id")
+                    if video_data:
+                        video_title = video_data.get("title", video_title)
+                    if (not thumbnail_url) and video_data:
+                        thumbnail_url, best_thumbnail_id = get_best_tiktok_thumbnail(video_data)
+                    if video_data and thumbnail_url:
+                        used_cached_metadata = True
+
+                if not video_data or not thumbnail_url:
+                    if not cache_entry:
+                        print("⚠️ No cached TikTok metadata available; invoking yt-dlp")
+                    else:
+                        print("⚠️ Cached TikTok metadata incomplete; invoking yt-dlp fallback")
+                    # Fallback: fetch metadata again (slower but ensures correctness)
+                    info_command = ["yt-dlp.exe", "--dump-json", "--no-playlist", url]
+                    result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
+                    result.check_returncode()
+                    video_data = json.loads(result.stdout)
+                    video_title = video_data.get("title", video_title)
+                    thumbnail_url, best_thumbnail_id = get_best_tiktok_thumbnail(video_data)
+                    used_cached_metadata = False
+                
+                print(f"🎯 Using TikTok {best_thumbnail_id} thumbnail for download")
+                
+                # Download the specific thumbnail URL
+                if thumbnail_url:
+                    print(f"📥 Downloading from URL: {thumbnail_url[:150]}...")
+                    response = requests.get(thumbnail_url, timeout=10)
+                    response.raise_for_status()
+                    
+                    # Check content type to ensure we're getting an image, not a video
+                    content_type = response.headers.get('content-type', '').lower()
+                    content_length = len(response.content)
+                    
+                    print(f"📦 Received: {content_type}, Size: {content_length/1024:.1f} KB")
+                    
+                    # If we got a video instead of an image, this is the wrong thumbnail
+                    if 'video' in content_type or 'mp4' in content_type:
+                        print(f"⚠️  WARNING: Thumbnail URL returned a VIDEO ({content_type}), not an image!")
+                        print(f"⚠️  This means TikTok returned the wrong thumbnail. Falling back to yt-dlp.")
+                        raise Exception("Thumbnail URL returned video instead of image")
+                    
+                    # Determine the source format from the URL or content-type
+                    source_ext = 'jpg'
+                    if 'webp' in content_type or '.webp' in thumbnail_url.lower():
+                        source_ext = 'webp'
+                    elif 'png' in content_type or '.png' in thumbnail_url.lower():
+                        source_ext = 'png'
+                    elif 'jpeg' in content_type or 'jpg' in content_type:
+                        source_ext = 'jpg'
+                    
+                    # Save with proper filename - SANITIZE BEFORE SAVING!
+                    title = video_title
+                    # Create temp filename with source extension and sanitize it
+                    temp_filename = f"{session_id}_{title}.{source_ext}"
+                    temp_filename = sanitize_filename(temp_filename)  # Fix invalid characters
+                    temp_path = os.path.join(temp_downloads_path, temp_filename)
+                    
+                    with open(temp_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    print(f"✓ Downloaded TikTok thumbnail as {source_ext.upper()} ({content_length/1024:.1f} KB)")
+                    
+                    # Update progress to complete (UPDATE existing dict, don't replace!)
+                    download_progress[session_id].update({
+                        'progress': 100,
+                        'status': 'complete',
+                        'message': 'Download complete!',
+                        'filename': temp_filename,
+                        'metadata_source': 'cache' if used_cached_metadata else 'fresh'
+                    })
+                    
+                    print(f"✅ TikTok custom thumbnail ready: {temp_filename}")
+                    return  # Exit early - thumbnail download is complete
+                    
+            except Exception as e:
+                print(f"⚠ TikTok thumbnail download failed, falling back to yt-dlp: {e}")
+                # Continue with normal yt-dlp command below
         
         print(f"Running command: {' '.join(command)}")
         
@@ -482,6 +586,7 @@ def download():
     url = data.get("url")
     format_type = data.get("format")
     quality = data.get("quality")
+    handler_start = time.perf_counter()
     
     print(f"\n=== DOWNLOAD REQUEST ===")
     print(f"URL: {url}")
@@ -519,6 +624,16 @@ def download():
             "message": "Invalid URL: Must be a valid HTTP or HTTPS link."
         }), 400
 
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_entry = video_cache.get(cache_key)
+    if cache_entry and time.time() - cache_entry.get("timestamp", 0) >= CACHE_DURATION:
+        cache_entry = None
+    if cache_entry:
+        cache_age = time.time() - cache_entry.get("timestamp", 0)
+        print(f"✅ Download cache hit for {url[:50]}... (age {cache_age:.1f}s)")
+    else:
+        print(f"⚠️ Download cache miss for {url[:50]}...")
+
     try:
         # Generate unique session ID for this download
         session_id = str(uuid.uuid4())[:8]
@@ -534,87 +649,13 @@ def download():
         image_formats = ["png", "webp", "jpg", "jpeg"]
         is_image_format = format_type.lower() in image_formats
         
+        # Store whether this is a TikTok thumbnail download for background thread
+        is_tiktok_thumbnail = is_image_format and "tiktok.com" in url
+        
         if is_image_format:
             # For image formats, download thumbnail only
             file_extension = format_type.lower()
             output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s")
-            
-            # For TikTok, we need to download the CORRECT custom thumbnail (dynamicCover/cover)
-            # not yt-dlp's default which might be originCover (low quality)
-            if "tiktok.com" in url:
-                try:
-                    # Get video info to find the correct thumbnail
-                    info_command = ["yt-dlp.exe", "--dump-json", "--no-playlist", url]
-                    result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
-                    video_data = json.loads(result.stdout)
-                    
-                    # Use the shared helper function to get the EXACT same thumbnail as preview
-                    thumbnail_url, best_thumbnail_id = get_best_tiktok_thumbnail(video_data)
-                    
-                    print(f"🎯 Using TikTok {best_thumbnail_id} thumbnail for download")
-                    
-                    # Download the specific thumbnail URL
-                    if thumbnail_url:
-                        print(f"📥 Downloading from URL: {thumbnail_url[:150]}...")
-                        response = requests.get(thumbnail_url, timeout=10)
-                        response.raise_for_status()
-                        
-                        # Check content type to ensure we're getting an image, not a video
-                        content_type = response.headers.get('content-type', '').lower()
-                        content_length = len(response.content)
-                        
-                        print(f"📦 Received: {content_type}, Size: {content_length/1024:.1f} KB")
-                        
-                        # If we got a video instead of an image, this is the wrong thumbnail
-                        if 'video' in content_type or 'mp4' in content_type:
-                            print(f"⚠️  WARNING: Thumbnail URL returned a VIDEO ({content_type}), not an image!")
-                            print(f"⚠️  This means TikTok returned the wrong thumbnail. Falling back to yt-dlp.")
-                            raise Exception("Thumbnail URL returned video instead of image")
-                        
-                        # Determine the source format from the URL or content-type
-                        source_ext = 'jpg'
-                        if 'webp' in content_type or '.webp' in thumbnail_url.lower():
-                            source_ext = 'webp'
-                        elif 'png' in content_type or '.png' in thumbnail_url.lower():
-                            source_ext = 'png'
-                        elif 'jpeg' in content_type or 'jpg' in content_type:
-                            source_ext = 'jpg'
-                        
-                        # Save with proper filename - SANITIZE BEFORE SAVING!
-                        title = video_data.get("title", "thumbnail")
-                        # Create temp filename with source extension and sanitize it
-                        temp_filename = f"{session_id}_{title}.{source_ext}"
-                        temp_filename = sanitize_filename(temp_filename)  # Fix invalid characters
-                        temp_path = os.path.join(temp_downloads_path, temp_filename)
-                        
-                        with open(temp_path, 'wb') as f:
-                            f.write(response.content)
-                        
-                        print(f"✓ Downloaded TikTok thumbnail as {source_ext.upper()} ({content_length/1024:.1f} KB)")
-                        
-                        # For now, deliver the thumbnail in its native format from TikTok
-                        # (usually WebP or JPG) - this ensures we get the correct custom thumbnail
-                        # without relying on external conversion tools
-                        final_filename = temp_filename
-                        print(f"✅ TikTok custom thumbnail ready: {final_filename}")
-                        
-                        # Update progress to complete
-                        download_progress[session_id] = {
-                            'progress': 100,
-                            'status': 'complete',
-                            'message': 'Download complete!',
-                            'filename': final_filename
-                        }
-                        
-                        print(f"✅ TikTok thumbnail ready as {file_extension.upper()}: {final_filename}")
-                        
-                        return jsonify({
-                            "status": "started",
-                            "session_id": session_id,
-                            "message": "Download started"
-                        })
-                except Exception as e:
-                    print(f"⚠ TikTok thumbnail download failed, falling back to yt-dlp: {e}")
             
             # For non-TikTok or fallback, use yt-dlp's --write-thumbnail
             # Download thumbnail and convert to requested format
@@ -683,18 +724,37 @@ def download():
                     print("Download mode: Video (MP4) - Best quality with audio")
 
         # Start download in background thread
-        download_thread = threading.Thread(
-            target=perform_download,
-            args=(session_id, url, format_type, quality, output_template, command)
-        )
-        download_thread.daemon = True
-        download_thread.start()
+        # Offload TikTok thumbnail downloads to the background queue; thumbnails from other
+        # platforms still rely on yt-dlp's internal conversion pipeline.
+        if is_tiktok_thumbnail:
+            job = download_executor.submit(
+                perform_download,
+                session_id,
+                url,
+                format_type,
+                quality,
+                output_template,
+                command,
+                cache_entry
+            )
+            job.add_done_callback(lambda fut: fut.exception() and print(f"⚠️  Background TikTok job error: {fut.exception()}"))
+        else:
+            download_thread = threading.Thread(
+                target=perform_download,
+                args=(session_id, url, format_type, quality, output_template, command, cache_entry)
+            )
+            download_thread.daemon = True
+            download_thread.start()
         
         # Return session_id immediately so frontend can start polling for progress
+        handler_elapsed = time.perf_counter() - handler_start
+        download_progress[session_id]['handler_elapsed'] = handler_elapsed
+        print(f"📨 Responding to download request in {handler_elapsed:.2f}s (session {session_id})")
         return jsonify({
             "status": "started",
             "session_id": session_id,
-            "message": "Download started"
+            "message": "Download started",
+            "debug_handler_elapsed": handler_elapsed
         })
     except Exception as e:
         error_msg = str(e) if str(e) else "Unknown error occurred during download"
@@ -749,14 +809,15 @@ def video_info():
     cache_key = hashlib.md5(url.encode()).hexdigest()
     
     # Check cache first
-    if cache_key in video_cache:
-        cached_data, cached_time = video_cache[cache_key]
-        if time.time() - cached_time < CACHE_DURATION:
+    cache_entry = video_cache.get(cache_key)
+    if cache_entry:
+        if time.time() - cache_entry.get("timestamp", 0) < CACHE_DURATION:
+            cached_info = cache_entry.get("info", {})
             print(f"✓ Using cached data for: {url[:50]}...")
             
             # 🐛 DEBUG: Check if cached thumbnail file exists
-            if cached_data.get("thumbnail") and cached_data["thumbnail"].startswith("/thumbnail/"):
-                thumb_filename = cached_data["thumbnail"].replace("/thumbnail/", "")
+            if cached_info.get("thumbnail") and cached_info["thumbnail"].startswith("/thumbnail/"):
+                thumb_filename = cached_info["thumbnail"].replace("/thumbnail/", "")
                 thumb_path = os.path.join(temp_downloads_path, thumb_filename)
                 file_exists = os.path.exists(thumb_path)
                 print(f"🐛 DEBUG Cache: thumbnail={thumb_filename}, exists={file_exists}")
@@ -764,7 +825,7 @@ def video_info():
                     print(f"⚠️ WARNING: Cached thumbnail missing! Path: {thumb_path}")
                     print(f"⚠️ Available files: {os.listdir(temp_downloads_path)}")
             
-            return jsonify(cached_data)
+            return jsonify(cached_info)
         else:
             # Cache expired, remove it
             del video_cache[cache_key]
@@ -798,6 +859,8 @@ def video_info():
         # Extract thumbnail URL - USE DIRECT URL FOR SPEED (except Instagram)
         thumbnail_url = video_data.get("thumbnail", "")
         local_thumbnail = ""
+        thumbnail_path = None
+        selected_thumbnail_id = None
         
         # For TikTok, prefer dynamicCover or cover (the REAL custom thumbnails with text overlays!)
         # originCover is tiny (8KB) and low quality, but cover/dynamicCover are high quality (3MB+)
@@ -805,6 +868,7 @@ def video_info():
             # Use the shared helper function to ensure consistency with download
             thumbnail_url, thumb_id = get_best_tiktok_thumbnail(video_data)
             print(f"✓ Using TikTok {thumb_id} thumbnail for preview")
+            selected_thumbnail_id = thumb_id
         
         # For YouTube, construct high-quality thumbnail URL directly
         if "youtube.com" in url or "youtu.be" in url:
@@ -1074,7 +1138,14 @@ def video_info():
         # This speeds up initial load from 7s to 1-2s
         
         # Cache the result
-        video_cache[cache_key] = (info, time.time())
+        video_cache[cache_key] = {
+            "timestamp": time.time(),
+            "info": info,
+            "raw_metadata": video_data,
+            "thumbnail_url": thumbnail_url,
+            "thumbnail_id": selected_thumbnail_id,
+            "local_thumbnail_path": thumbnail_path
+        }
         
         print(f"Title: {info['title']}")
         print(f"Uploader: {uploader}")
