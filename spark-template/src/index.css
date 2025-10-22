@@ -18,12 +18,12 @@
   /* Custom scrollbar - ShadCN-inspired colors with default width */
   ::-webkit-scrollbar-track {
     background: transparent;
-    transition: background 0.3s ease;
+    transition: background 0.05s ease;
   }
   ::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 5px;
-    transition: background 0.3s ease;
+    transition: background 0.05s ease;
   }
   * {
     scrollbar-color: var(--scrollbar-thumb) transparent;
