@@ -652,12 +652,14 @@ function HomePage() {
                 const topLanguages = selectTopLanguages(progressData.languages)
                 setAvailableLanguages(topLanguages)
                 if (topLanguages.length > 0) {
-                  setCaptionStatus(`Found captions in ${topLanguages.length} popular languages.`)
-                  toast.success(`Found ${progressData.languages.length} caption languages!`)
+                  const languageCount = topLanguages.length
+                  const message = `Found ${languageCount} caption language${languageCount > 1 ? 's' : ''}!`
+                  setCaptionStatus(`Found ${languageCount} caption language${languageCount > 1 ? 's' : ''}.`)
+                  toast.success(message)
                   console.log(`✓ Showing top languages:`, topLanguages.map((lang) => lang.code))
                 } else {
-                  setCaptionStatus('Captions available, but none match the popular language list.')
-                  console.log('✗ Captions found but no popular languages matched')
+                  setCaptionStatus('Captions available, but none match the language list.')
+                  console.log('✗ Captions found but no languages matched')
                 }
               } else {
                 setAvailableLanguages([])

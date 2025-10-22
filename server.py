@@ -1534,6 +1534,7 @@ def check_caption_availability(url):
 
 # Language code to name mapping
 LANGUAGE_NAMES = {
+    # 3-letter ISO codes (ISO 639-2)
     'eng': 'English', 'spa': 'Spanish', 'fra': 'French', 'deu': 'German', 'ita': 'Italian',
     'por': 'Portuguese', 'rus': 'Russian', 'jpn': 'Japanese', 'kor': 'Korean', 'cmn': 'Chinese',
     'ara': 'Arabic', 'hin': 'Hindi', 'ben': 'Bengali', 'tur': 'Turkish', 'vie': 'Vietnamese',
@@ -1543,7 +1544,18 @@ LANGUAGE_NAMES = {
     'hun': 'Hungarian', 'lit': 'Lithuanian', 'lav': 'Latvian', 'est': 'Estonian', 'slk': 'Slovak',
     'slv': 'Slovenian', 'srp': 'Serbian', 'ell': 'Greek', 'alb': 'Albanian', 'mkd': 'Macedonian',
     'uzb': 'Uzbek', 'kaz': 'Kazakh', 'aze': 'Azerbaijani', 'urd': 'Urdu', 'khm': 'Khmer',
-    'swa': 'Swahili', 'jav': 'Javanese', 'ceb': 'Cebuano', 'fil': 'Filipino', 'msa': 'Malay'
+    'swa': 'Swahili', 'jav': 'Javanese', 'ceb': 'Cebuano', 'fil': 'Filipino', 'msa': 'Malay',
+    # 2-letter ISO codes (ISO 639-1) - most commonly used by platforms
+    'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
+    'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese',
+    'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'tr': 'Turkish', 'vi': 'Vietnamese',
+    'pl': 'Polish', 'uk': 'Ukrainian', 'nl': 'Dutch', 'th': 'Thai', 'id': 'Indonesian',
+    'he': 'Hebrew', 'cs': 'Czech', 'ro': 'Romanian', 'sv': 'Swedish', 'da': 'Danish',
+    'fi': 'Finnish', 'no': 'Norwegian', 'bg': 'Bulgarian', 'ca': 'Catalan', 'hr': 'Croatian',
+    'hu': 'Hungarian', 'lt': 'Lithuanian', 'lv': 'Latvian', 'et': 'Estonian', 'sk': 'Slovak',
+    'sl': 'Slovenian', 'sr': 'Serbian', 'el': 'Greek', 'sq': 'Albanian', 'mk': 'Macedonian',
+    'uz': 'Uzbek', 'kk': 'Kazakh', 'az': 'Azerbaijani', 'ur': 'Urdu', 'km': 'Khmer',
+    'sw': 'Swahili', 'jw': 'Javanese', 'fil': 'Filipino', 'ms': 'Malay'
 }
 
 def get_language_name(lang_code):
