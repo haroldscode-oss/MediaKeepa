@@ -80,7 +80,7 @@ download_progress = {}
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
-FILE_MAX_AGE = 600  # Delete files older than 10 minutes
+FILE_MAX_AGE = 3600  # Delete files older than 1 hour (matches cache duration)
 
 def cleanup_old_files():
     """
@@ -753,6 +753,17 @@ def video_info():
         cached_data, cached_time = video_cache[cache_key]
         if time.time() - cached_time < CACHE_DURATION:
             print(f"✓ Using cached data for: {url[:50]}...")
+            
+            # 🐛 DEBUG: Check if cached thumbnail file exists
+            if cached_data.get("thumbnail") and cached_data["thumbnail"].startswith("/thumbnail/"):
+                thumb_filename = cached_data["thumbnail"].replace("/thumbnail/", "")
+                thumb_path = os.path.join(temp_downloads_path, thumb_filename)
+                file_exists = os.path.exists(thumb_path)
+                print(f"🐛 DEBUG Cache: thumbnail={thumb_filename}, exists={file_exists}")
+                if not file_exists:
+                    print(f"⚠️ WARNING: Cached thumbnail missing! Path: {thumb_path}")
+                    print(f"⚠️ Available files: {os.listdir(temp_downloads_path)}")
+            
             return jsonify(cached_data)
         else:
             # Cache expired, remove it
@@ -1156,9 +1167,14 @@ def serve_thumbnail(filename):
     try:
         file_path = os.path.join(temp_downloads_path, filename)
         
+        print(f"🐛 DEBUG Thumbnail request: {filename}")
+        
         if not os.path.exists(file_path):
+            print(f"❌ 404: Thumbnail not found at {file_path}")
+            print(f"📂 Available files in temp_downloads: {os.listdir(temp_downloads_path)}")
             return jsonify({"status": "error", "message": "Thumbnail not found"}), 404
         
+        print(f"✅ Serving thumbnail: {filename}")
         # Serve the thumbnail
         return send_file(file_path, mimetype='image/jpeg')
         
