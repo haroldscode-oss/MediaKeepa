@@ -1202,7 +1202,7 @@ function HomePage() {
 function App() {
   return (
     <Router>
-      <Toaster position="top-center" richColors />
+      <Toaster position="top-center" />
       <div className="min-h-screen bg-background flex flex-col">
         <div className="flex-1 px-4 py-6 sm:p-8">
           <Routes>
