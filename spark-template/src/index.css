@@ -211,3 +211,12 @@
   background-size: 200% 100%;
   animation: progress-shimmer 2s ease-in-out infinite;
 }
+
+/* Sonner toast description color fix */
+[data-sonner-toast][data-styled='true'] [data-description] {
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark [data-sonner-toast][data-styled='true'] [data-description] {
+  color: hsl(var(--foreground)) !important;
+}
