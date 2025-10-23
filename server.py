@@ -169,33 +169,75 @@ def get_best_tiktok_thumbnail(video_data):
 
 def sanitize_filename(filename):
     """
-    Sanitize filename to remove special characters that cause URL encoding issues.
-    Replaces spaces with underscores for better compatibility.
+    Sanitize filename to remove special characters while preserving spaces in titles.
     """
-    # Split filename into name and extension
     name, ext = os.path.splitext(filename)
     
-    # Remove just the # symbol but keep the hashtag text (TikTok/social media tags)
+    # Detect and preserve session prefix (8-char hex)
+    session_prefix = ""
+    if "_" in name:
+        potential_prefix, remainder = name.split("_", 1)
+        if re.fullmatch(r"[0-9a-fA-F]{8}", potential_prefix):
+            session_prefix = potential_prefix
+            name = remainder
+    
+    # Remove problematic characters
     name = name.replace('#', '')
-    
-    # Replace problematic unicode characters with safe alternatives
-    # ⧸ (U+29F8) is a "big solidus" that appears in place of /
     name = name.replace('⧸', '-')
+    name = re.sub(r'["\\/:*?<>|]', '', name)
+    name = re.sub(r'[^\w\s\-]', '', name)
     
-    # Remove other problematic characters but keep basic punctuation
-    name = re.sub(r'[^\w\s\-_]', '', name)
-    
-    # Remove multiple spaces and trim
+    # Convert underscores to spaces for readability
+    name = name.replace('_', ' ')
     name = re.sub(r'\s+', ' ', name).strip()
     
-    # Replace all spaces with underscores for better compatibility
-    name = name.replace(' ', '_')
-    
-    # If name is empty or too short, use a default name
     if not name or len(name) < 3:
         name = "video"
     
+    if session_prefix:
+        return f"{session_prefix}_{name}{ext}"
     return name + ext
+
+
+def resolve_media_title(url, cache_entry=None):
+    """Fetch the actual media title from metadata to preserve spaces."""
+    if cache_entry:
+        raw = cache_entry.get("raw_metadata") or {}
+        title = raw.get("title")
+        if title:
+            return title
+        info = cache_entry.get("info") or {}
+        title = info.get("title")
+        if title:
+            return title
+    
+    try:
+        result = subprocess.run(
+            ["yt-dlp.exe", "--dump-json", "--no-download", "--no-playlist", url],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            encoding="utf-8",
+            errors="replace"
+        )
+        if result.returncode == 0 and result.stdout:
+            metadata = json.loads(result.stdout)
+            return metadata.get("title")
+    except Exception as e:
+        print(f"⚠️ Metadata fetch error: {e}")
+    
+    return None
+
+
+def fallback_title_from_filename(filename, session_id):
+    """Extract title from raw filename if metadata fetch fails."""
+    base = os.path.splitext(filename)[0]
+    prefix = f"{session_id}_"
+    if base.startswith(prefix):
+        base = base[len(prefix):]
+    base = base.replace('_', ' ')
+    base = re.sub(r'\s+', ' ', base).strip()
+    return base or "video"
 
 
 def extract_audio_bitrate_kbps(fmt, duration_seconds=None):
@@ -502,27 +544,38 @@ def perform_download(session_id, url, format_type, quality, output_template, com
             original_file = downloaded_files[0]
             
         original_filename = os.path.basename(original_file)
-        print(f"Original filename: {original_filename}")
+        print(f"🗂️ Original download: {original_filename}")
         
         # Ensure the file has the correct extension
         if not original_filename.endswith(f".{file_extension}"):
-            # If the file doesn't have the right extension, rename it
             base_name = os.path.splitext(original_filename)[0]
             correct_filename = f"{base_name}.{file_extension}"
             correct_file = os.path.join(temp_downloads_path, correct_filename)
             os.rename(original_file, correct_file)
             original_file = correct_file
             original_filename = os.path.basename(correct_file)
-            print(f"Fixed extension, new filename: {original_filename}")
+            print(f"🔧 Fixed extension: {original_filename}")
         
-        # Sanitize the filename to remove special characters
-        sanitized_filename = sanitize_filename(original_filename)
-        print(f"Sanitized filename: {sanitized_filename}")
+        # Fetch the real title from metadata to preserve spaces
+        title = resolve_media_title(url, cache_entry)
+        if title:
+            print(f"📝 Using metadata title: {title}")
+        else:
+            title = fallback_title_from_filename(original_filename, session_id)
+            print(f"📝 Using fallback title: {title}")
         
-        # Rename the file to the sanitized version
+        # Build filename with proper title and sanitize
+        extension = os.path.splitext(original_filename)[1]
+        new_filename = f"{session_id}_{title}{extension}"
+        sanitized_filename = sanitize_filename(new_filename)
         sanitized_file_path = os.path.join(temp_downloads_path, sanitized_filename)
-        os.rename(original_file, sanitized_file_path)
-        print(f"File renamed to: {sanitized_file_path}")
+        
+        # Rename to final filename
+        if os.path.abspath(original_file) != os.path.abspath(sanitized_file_path):
+            if os.path.exists(sanitized_file_path):
+                os.remove(sanitized_file_path)
+            os.rename(original_file, sanitized_file_path)
+            print(f"📦 Final filename: {sanitized_filename}")
         
         # Mark download as complete
         download_progress[session_id]['status'] = 'complete'
@@ -659,7 +712,7 @@ def download():
         if is_image_format:
             # For image formats, download thumbnail only
             file_extension = format_type.lower()
-            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s")
+            output_template = os.path.join(temp_downloads_path, f"{session_id}_raw")
             
             # For non-TikTok or fallback, use yt-dlp's --write-thumbnail
             # Download thumbnail and convert to requested format
@@ -678,8 +731,8 @@ def download():
             # For video/audio formats, use the requested format type
             file_extension = format_type.lower()
             
-            # Output template - use explicit extension to prevent file type issues
-            output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.{file_extension}")
+            # Output template - use raw filename to avoid yt-dlp's title sanitization
+            output_template = os.path.join(temp_downloads_path, f"{session_id}_raw.%(ext)s")
             
             # Base command with --no-playlist to prevent downloading entire playlists
             command = ["yt-dlp.exe", url, "-o", output_template, "--no-playlist"]
@@ -1845,7 +1898,7 @@ def download_caption():
         }
         
         # Output template for caption file
-        output_template = os.path.join(temp_downloads_path, f"{session_id}_%(title)s.%(ext)s")
+        output_template = os.path.join(temp_downloads_path, f"{session_id}_raw.%(ext)s")
         
         # For TXT format, download as VTT first, then convert
         # yt-dlp doesn't support TXT natively
@@ -1930,16 +1983,30 @@ def download_caption():
                         }
                         return
                 
-                # Sanitize filename
-                sanitized_filename = sanitize_filename(original_filename)
+                # Get cache for metadata title
+                cache_key = hashlib.md5(url.encode()).hexdigest()
+                cache_entry = video_cache.get(cache_key)
+                
+                # Fetch real title from metadata
+                title = resolve_media_title(url, cache_entry)
+                if title:
+                    print(f"📝 Using metadata title for caption: {title}")
+                else:
+                    title = fallback_title_from_filename(original_filename, session_id)
+                    print(f"📝 Using fallback caption title: {title}")
+                
+                # Build filename with real title
+                caption_ext = os.path.splitext(original_filename)[1]
+                new_caption_name = f"{session_id}_{title}{caption_ext}"
+                sanitized_filename = sanitize_filename(new_caption_name)
                 sanitized_path = os.path.join(temp_downloads_path, sanitized_filename)
                 
-                # Rename if needed
-                if original_filename != sanitized_filename:
+                # Rename to final filename
+                if os.path.abspath(caption_file) != os.path.abspath(sanitized_path):
+                    if os.path.exists(sanitized_path):
+                        os.remove(sanitized_path)
                     os.rename(caption_file, sanitized_path)
-                    print(f"Caption file renamed to: {sanitized_filename}")
-                else:
-                    sanitized_filename = original_filename
+                    print(f"📦 Caption renamed to: {sanitized_filename}")
                 
                 # Update progress
                 download_progress[session_id] = {
