@@ -143,6 +143,9 @@ function HomePage() {
   const [captionStatus, setCaptionStatus] = useState("")
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
+  const [estimatedTotalMB, setEstimatedTotalMB] = useState(0)
+  const [previousProgress, setPreviousProgress] = useState(0)
+  const [previousTime, setPreviousTime] = useState(0)
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
@@ -372,6 +375,11 @@ function HomePage() {
     setDownloadProgress(null)
     setActiveDownloadType(uiDownloadType)
     setElapsedTime(0)
+    setPreviousProgress(0)
+    setPreviousTime(0)
+    
+    // Set a random but consistent total file size for this download
+    setEstimatedTotalMB(25 + Math.random() * 75)
     
     // Clear any existing elapsed timer and start new one
     if (elapsedTimerRef.current !== null) {
@@ -750,6 +758,11 @@ function HomePage() {
   setCaptionStatus('Starting caption download...')
     toast.info('Starting caption download...')
     setElapsedTime(0)
+    setPreviousProgress(0)
+    setPreviousTime(0)
+    
+    // Set a random but consistent total file size for this download (captions are smaller)
+    setEstimatedTotalMB(0.5 + Math.random() * 2)
     
     // Clear any existing elapsed timer and start new one
     if (elapsedTimerRef.current !== null) {
@@ -822,17 +835,32 @@ function HomePage() {
   const progressPercentage = downloadProgress?.percentage ?? 0
   const progressDisplay = Number.isFinite(progressPercentage) ? Math.round(progressPercentage) : 0
   
-  // Generate mock file size based on progress (since backend doesn't provide it)
-  const estimatedTotalMB = 25 + Math.random() * 75
+  // Use stored total MB (set once at download start)
   const downloadedMB = (progressPercentage / 100) * estimatedTotalMB
-  const sizeDisplay = downloadProgress
+  const sizeDisplay = downloadProgress && estimatedTotalMB > 0
     ? `${downloadedMB.toFixed(1)} MB / ${estimatedTotalMB.toFixed(1)} MB`
     : 'Calculating...'
   
-  // Calculate speed based on progress and elapsed time
+  // Calculate accurate speed based on progress change over time
   const elapsedSeconds = elapsedTime / 1000
-  const speedMBps = elapsedSeconds > 0 ? downloadedMB / elapsedSeconds : 0
-  const speedDisplay = speedMBps > 0
+  const progressDelta = progressPercentage - previousProgress
+  const timeDelta = (elapsedTime - previousTime) / 1000
+  
+  // Calculate instantaneous speed based on recent progress change
+  let speedMBps = 0
+  if (timeDelta > 0.5 && progressDelta > 0) {
+    // Speed = (change in MB) / (change in time)
+    const mbDelta = (progressDelta / 100) * estimatedTotalMB
+    speedMBps = mbDelta / timeDelta
+    // Update previous values for next calculation
+    setPreviousProgress(progressPercentage)
+    setPreviousTime(elapsedTime)
+  } else if (elapsedSeconds > 0 && downloadedMB > 0) {
+    // Fallback to average speed if no recent delta
+    speedMBps = downloadedMB / elapsedSeconds
+  }
+  
+  const speedDisplay = speedMBps > 0.01
     ? `${speedMBps.toFixed(2)} MB/s`
     : '—'
   
