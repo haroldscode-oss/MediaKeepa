@@ -41,7 +41,7 @@ export function MediaKeepaLogo() {
         <span className="text-2xl font-bold text-foreground tracking-tight">
           MediaKeepa
         </span>
-        <span className="px-2.5 py-0.5 text-xs font-bold text-white bg-gradient-to-r from-purple-600 to-purple-500 rounded-full shadow-[0_0_15px_rgba(139,92,246,0.6)] dark:shadow-[0_0_20px_rgba(139,92,246,0.5)] translate-y-0.5">
+        <span className="px-2.5 py-0.5 text-xs font-bold text-white rounded-full shadow-[0_0_15px_rgba(139,92,246,0.6)] dark:shadow-[0_0_20px_rgba(139,92,246,0.5)] translate-y-0.5" style={{ background: 'linear-gradient(to right, #8B5CF6, #8B5CF6)' }}>
           BETA
         </span>
       </div>
