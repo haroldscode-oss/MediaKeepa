@@ -1120,31 +1120,34 @@ function HomePage() {
                     >
                       <Card className="border-2 bg-background/80 shadow-sm">
                         <div className="space-y-4 p-6">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
                               {downloadComplete && (
                                 <motion.div
                                   initial={{ scale: 0, rotate: -180 }}
                                   animate={{ scale: 1, rotate: 0 }}
                                   transition={{ type: "spring", stiffness: 200, damping: 15 }}
                                 >
-                                  <CheckCircle weight="fill" size={20} className="text-foreground" />
+                                  <CheckCircle weight="fill" size={24} className="text-foreground" />
                                 </motion.div>
                               )}
-                              <div className="space-y-1">
-                                <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                                  {downloadComplete ? "Complete" : "Downloading"}
-                                </p>
-                                <p className="text-base font-semibold leading-tight">{downloadLabel}</p>
-                              </div>
+                              <p className="text-base font-semibold leading-tight">
+                                {downloadComplete 
+                                  ? 'Download Complete!' 
+                                  : !downloadProgress 
+                                    ? 'Starting...' 
+                                    : progressDisplay >= 99 
+                                      ? 'Finalizing...' 
+                                      : 'Downloading...'}
+                              </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-muted-foreground">{progressDisplay}%</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-base font-semibold">{progressDisplay}%</span>
                               {downloadComplete && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8 hover:bg-muted"
+                                  className="h-8 w-8 hover:bg-muted -mr-2"
                                   onClick={() => {
                                     setDownloadComplete(false)
                                     setDownloadProgress(null)
@@ -1158,39 +1161,36 @@ function HomePage() {
 
                           <div className="relative h-3 bg-muted rounded-full overflow-hidden">
                             <motion.div
-                              className="absolute inset-0 bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_100%]"
-                              style={{ width: `${progressPercentage}%` }}
-                              animate={{
-                                backgroundPosition: ['0% 0%', '100% 0%']
-                              }}
+                              className="absolute inset-0 bg-foreground rounded-full"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${progressPercentage}%` }}
                               transition={{
-                                backgroundPosition: {
-                                  duration: 1.5,
-                                  repeat: Infinity,
-                                  ease: 'linear'
-                                }
+                                duration: 0.3,
+                                ease: [0.25, 0.1, 0.25, 1]
                               }}
                             />
                           </div>
 
-                          <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">File Size</p>
-                              <p>{sizeDisplay}</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground text-xs">File Size</p>
+                              <p className="font-semibold text-foreground">{sizeDisplay}</p>
                             </div>
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground text-xs">
                                 {downloadComplete ? "Average Speed" : "Speed"}
                               </p>
-                              <p>{speedDisplay}</p>
+                              <p className="font-semibold text-foreground">{speedDisplay}</p>
                             </div>
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">Total Time</p>
-                              <p>{etaDisplay}</p>
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground text-xs">
+                                {downloadComplete ? "Total Time" : "Elapsed Time"}
+                              </p>
+                              <p className="font-semibold text-foreground">{etaDisplay}</p>
                             </div>
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">Current Status</p>
-                              <p>
+                            <div className="space-y-0.5">
+                              <p className="text-muted-foreground text-xs">Current Status</p>
+                              <p className="font-semibold text-foreground">
                                 {downloadComplete 
                                   ? 'Download Complete!' 
                                   : !downloadProgress 
