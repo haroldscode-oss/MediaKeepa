@@ -18,12 +18,13 @@ type LegalContent = {
 export const legalContent: LegalContent = {
   dmca: {
     title: "DMCA Policy",
-    lastUpdated: "January 17, 2025",
+    lastUpdated: "October 23, 2025",
     contactEmail: "dmca@mediakeepa.com",
     sections: [
       {
         content: [
           "MediaKeepa respects the intellectual property rights of others and expects its users to do the same. In accordance with the Digital Millennium Copyright Act of 1998 (DMCA), we will respond expeditiously to claims of copyright infringement committed using our service.",
+          "IMPORTANT: MediaKeepa is a tool provider only. We do NOT host, store, upload, or distribute any copyrighted content. All content is downloaded directly from third-party platforms. We have no control over the content available on those platforms.",
         ],
       },
       {
@@ -61,46 +62,73 @@ export const legalContent: LegalContent = {
       {
         heading: "Important Disclaimer",
         content: [
-          "MediaKeepa is a tool that provides download functionality. Users are solely responsible for ensuring they have the right to download and use any content. We do not host, store, or distribute any copyrighted content. All downloads are performed directly from the original source platforms.",
-          "By using MediaKeepa, you agree to only download content that you have the legal right to access and use, including content that is in the public domain, content you own, or content for which you have obtained proper authorization.",
+          "MediaKeepa is a SOFTWARE TOOL ONLY. We do not host, store, transmit, or distribute any copyrighted content whatsoever. Our service functions similarly to a web browser - it facilitates access to publicly available content that users request.",
+          "All downloads are performed directly from the original source platforms (YouTube, TikTok, etc.). MediaKeepa merely acts as a technical facilitator, similar to how a web browser displays web pages.",
+          "By using MediaKeepa, you agree to:",
+        ],
+        list: [
+          "Only download content that you have the legal right to access and use",
+          "Comply with all applicable copyright laws and the terms of service of source platforms",
+          "Download only content that is in the public domain, content you own, content you created, or content for which you have obtained proper authorization",
+          "Accept full legal responsibility for your downloads - MediaKeepa is not liable for your use of downloaded content",
+          "Understand that MediaKeepa does not verify, endorse, or take responsibility for any content downloaded through our tool",
+        ],
+      },
+      {
+        heading: "No Liability for User Actions",
+        content: [
+          "MediaKeepa explicitly disclaims any liability for copyright infringement or illegal use of downloaded content by users. You, the user, are solely responsible for ensuring your compliance with all applicable laws.",
+          "If you receive a DMCA notice or copyright complaint related to content you downloaded, you must handle it directly - MediaKeepa is not a party to your downloads and cannot assist with copyright disputes.",
         ],
       },
     ],
   },
   terms: {
     title: "Terms of Service",
-    lastUpdated: "January 17, 2025",
+    lastUpdated: "October 23, 2025",
     sections: [
       {
         content: [
           "Welcome to MediaKeepa. By accessing or using our service, you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our service.",
+          "READ CAREFULLY: These terms contain important information about your legal rights and obligations, including limitations on MediaKeepa's liability.",
         ],
       },
       {
         heading: "1. Description of Service",
         content: [
-          "MediaKeepa provides a media downloading tool that allows users to download publicly available media content from various online platforms. Our service acts as a facilitator and does not host, store, or distribute any content.",
+          "MediaKeepa is a SOFTWARE TOOL that facilitates downloading publicly available media content from various online platforms. CRITICAL: MediaKeepa does NOT host, store, transmit, upload, or distribute any content. We are a tool provider only.",
+          "Our service works similarly to a web browser or download manager - it processes user requests and facilitates technical connections to third-party platforms. We have no control over, and do not monitor, verify, or endorse any content accessed through our tool.",
         ],
       },
       {
         heading: "2. User Responsibilities",
         content: [
-          "You are solely responsible for your use of MediaKeepa and for any content you download. You agree to:",
+          "YOU ARE SOLELY AND COMPLETELY RESPONSIBLE for your use of MediaKeepa and for any content you download. By using this service, you explicitly agree to:",
         ],
         list: [
-          "Only download content that you have the legal right to access and use",
-          "Comply with all applicable laws and regulations, including copyright laws",
-          "Not use the service for any illegal or unauthorized purpose",
-          "Not violate the terms of service of any third-party platforms",
-          "Respect intellectual property rights of content creators and copyright holders",
-          "Not use the service in any way that could damage, disable, or impair our servers or networks",
+          "Only download content that you have the legal right to access, possess, and use",
+          "Comply with ALL applicable laws and regulations, including but not limited to copyright laws, DMCA, and intellectual property laws",
+          "Not use the service for any illegal, unauthorized, or infringing purpose whatsoever",
+          "Not violate the terms of service, policies, or rules of any third-party platforms",
+          "Respect intellectual property rights of content creators, copyright holders, and rights owners",
+          "Not use the service to download copyrighted content without explicit permission or valid legal basis (e.g., fair use)",
+          "Not use the service in any way that could damage, disable, overburden, or impair our servers, networks, or infrastructure",
+          "Accept full legal and financial responsibility for any claims, lawsuits, or legal action resulting from your downloads",
+          "Indemnify and hold MediaKeepa harmless from any legal consequences of your actions",
         ],
       },
       {
         heading: "3. Intellectual Property Rights",
         content: [
-          "You acknowledge that all content downloaded through MediaKeepa may be protected by copyright, trademark, or other intellectual property laws. MediaKeepa does not grant you any rights to such content, and you must obtain proper authorization before using any downloaded content.",
-          "The service itself, including all software, code, design, and trademarks, is the property of MediaKeepa and is protected by applicable intellectual property laws.",
+          "You acknowledge and agree that:",
+        ],
+        list: [
+          "All content accessed through MediaKeepa may be protected by copyright, trademark, patent, or other intellectual property laws",
+          "MediaKeepa does NOT grant you any rights, licenses, or permissions to use any content",
+          "You must obtain all necessary rights, licenses, and permissions directly from content owners before downloading or using any copyrighted material",
+          "Downloading copyrighted content without authorization is illegal and may subject you to civil and criminal penalties",
+          "MediaKeepa is not responsible for determining whether content is copyrighted or whether you have rights to download it",
+          "The MediaKeepa service itself (software, code, design, trademarks, documentation) is proprietary and protected by intellectual property laws",
         ],
       },
       {
@@ -120,19 +148,53 @@ export const legalContent: LegalContent = {
       {
         heading: "5. Disclaimer of Warranties",
         content: [
-          "MediaKeepa is provided on an 'as is' and 'as available' basis without warranties of any kind, either express or implied. We do not guarantee that the service will be uninterrupted, secure, or error-free. We make no warranties regarding the accuracy, reliability, or availability of any content downloaded through our service.",
+          "MEDIAKEEPA IS PROVIDED ON AN 'AS IS' AND 'AS AVAILABLE' BASIS WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO:",
+        ],
+        list: [
+          "No warranty that the service will be uninterrupted, secure, error-free, or virus-free",
+          "No warranty regarding the accuracy, reliability, legality, or availability of any content",
+          "No warranty that downloads will be successful or that files will be free from defects",
+          "No warranty that the service will meet your requirements or expectations",
+          "No warranty of merchantability, fitness for a particular purpose, or non-infringement",
+        ],
+        content: [
+          "YOU USE MEDIAKEEPA AT YOUR OWN RISK. We make no representations or warranties about the legality of downloading any specific content. Legal compliance is YOUR responsibility.",
         ],
       },
       {
         heading: "6. Limitation of Liability",
         content: [
-          "To the maximum extent permitted by law, MediaKeepa shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of profits or revenues, whether incurred directly or indirectly, or any loss of data, use, goodwill, or other intangible losses resulting from your use of the service.",
+          "TO THE MAXIMUM EXTENT PERMITTED BY LAW, MEDIAKEEPA, ITS OPERATORS, OWNERS, EMPLOYEES, AGENTS, AND AFFILIATES SHALL NOT BE LIABLE FOR:",
+        ],
+        list: [
+          "Any indirect, incidental, special, consequential, punitive, or exemplary damages",
+          "Any loss of profits, revenues, data, use, goodwill, or other intangible losses",
+          "Any damages resulting from your use or inability to use the service",
+          "Any damages resulting from unauthorized access to your data or transmissions",
+          "Any copyright infringement claims, DMCA notices, or legal action related to content you download",
+          "Any legal fees, court costs, settlements, or judgments arising from your illegal use of downloaded content",
+          "Any claims by third parties related to your downloads or use of content",
+        ],
+        content: [
+          "IN NO EVENT SHALL MEDIAKEEPA'S TOTAL LIABILITY EXCEED $10 (TEN US DOLLARS). This limitation applies regardless of the legal theory (contract, tort, negligence, strict liability, or otherwise).",
         ],
       },
       {
         heading: "7. Indemnification",
         content: [
-          "You agree to indemnify and hold harmless MediaKeepa and its affiliates, officers, agents, and employees from any claim, demand, or damage, including reasonable attorneys' fees, arising out of or related to your use of the service, your violation of these Terms, or your violation of any rights of another party.",
+          "YOU AGREE TO INDEMNIFY, DEFEND, AND HOLD HARMLESS MediaKeepa and its owners, operators, affiliates, officers, directors, employees, agents, licensors, and suppliers from and against ANY AND ALL:",
+        ],
+        list: [
+          "Claims, demands, actions, lawsuits, or proceedings brought by third parties",
+          "Losses, liabilities, damages, costs, and expenses (including reasonable attorneys' fees)",
+          "Arising out of or related to your use or misuse of the service",
+          "Arising from your violation of these Terms or any applicable law",
+          "Arising from your violation of any third-party rights, including intellectual property rights",
+          "Arising from any content you download, including copyright infringement claims",
+          "Arising from DMCA notices, cease and desist letters, or legal action related to your downloads",
+        ],
+        content: [
+          "This indemnification obligation survives termination of your use of the service and continues indefinitely.",
         ],
       },
       {
@@ -157,7 +219,7 @@ export const legalContent: LegalContent = {
   },
   privacy: {
     title: "Privacy Policy",
-    lastUpdated: "January 17, 2025",
+    lastUpdated: "October 23, 2025",
     sections: [
       {
         content: [
@@ -250,7 +312,7 @@ export const legalContent: LegalContent = {
   },
   "how-it-works": {
     title: "How It Works",
-    lastUpdated: "January 17, 2025",
+    lastUpdated: "October 23, 2025",
     sections: [
       {
         content: [
@@ -310,16 +372,12 @@ export const legalContent: LegalContent = {
         ],
       },
       {
-        heading: "Legal Usage",
+        heading: "Legal Usage - READ CAREFULLY",
         content: [
-          "MediaKeepa is a tool that provides functionality. You, the user, are responsible for ensuring that your use of the service complies with applicable laws and the terms of service of source platforms.",
-          "Always verify that you have the legal right to download and use any content. This includes:",
-        ],
-        list: [
-          "Content that is in the public domain",
-          "Content that you own or created yourself",
-          "Content for which you have obtained proper authorization or licensing",
-          "Content used under fair use provisions (varies by jurisdiction)",
+          "⚠️ IMPORTANT LEGAL NOTICE: MediaKeepa is a SOFTWARE TOOL only. We do NOT host, store, or distribute any content. YOU are completely responsible for ensuring your downloads are legal.",
+          "Before downloading ANY content, you must verify you have legal authorization. Acceptable uses include: (1) Content in the public domain with no copyright restrictions, (2) Content you personally own or created yourself, (3) Content for which you have obtained explicit written permission from the copyright owner, (4) Content covered by a valid license you purchased, (5) Content you are downloading for legally permitted purposes under fair use doctrine (educational, commentary, criticism - consult a lawyer).",
+          "WARNING - Downloading copyrighted content without permission is ILLEGAL in most countries and can result in: Civil lawsuits with damages up to $150,000 per work infringed (in the US), criminal prosecution with potential jail time for willful infringement, DMCA takedown notices and legal threats, ISP account termination, and permanent legal records.",
+          "MediaKeepa CANNOT and DOES NOT provide legal advice. We are NOT responsible for your downloads. If you're unsure whether downloading something is legal, DON'T DO IT or consult a lawyer. By using MediaKeepa, you accept FULL legal and financial responsibility for all your downloads. We will not defend you in court or pay your legal fees if you get sued for copyright infringement.",
         ],
       },
       {

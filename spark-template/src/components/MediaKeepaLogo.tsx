@@ -37,9 +37,12 @@ export function MediaKeepaLogo() {
       >
         <Video weight="fill" size={32} style={{ color: '#8B5CF6' }} />
       </motion.div>
-      <div className="flex flex-col">
+      <div className="flex items-center gap-2">
         <span className="text-2xl font-bold text-foreground tracking-tight">
           MediaKeepa
+        </span>
+        <span className="px-2.5 py-0.5 text-xs font-bold text-white bg-gradient-to-r from-purple-600 to-purple-500 rounded-full shadow-[0_0_15px_rgba(139,92,246,0.6)] dark:shadow-[0_0_20px_rgba(139,92,246,0.5)] translate-y-0.5">
+          BETA
         </span>
       </div>
     </motion.div>

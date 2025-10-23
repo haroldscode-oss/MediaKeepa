@@ -885,7 +885,7 @@ function HomePage() {
         transition={{ duration: 0.5, delay: 0.2 }}
         className="space-y-8 pb-8"
       >
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="relative">
               <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center">
                 <WebsiteIcon 
@@ -950,7 +950,7 @@ function HomePage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.4 }}
-                className="space-y-8"
+                className="space-y-6"
               >
                 <Card className="overflow-hidden border-2">
                   <div className="flex flex-col sm:flex-row gap-4 p-5">
