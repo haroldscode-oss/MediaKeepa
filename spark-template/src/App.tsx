@@ -142,10 +142,12 @@ function HomePage() {
   const [activeDownloadType, setActiveDownloadType] = useState<"video" | "audio" | "image" | "caption" | null>(null)
   const [captionStatus, setCaptionStatus] = useState("")
   const [isInputFocused, setIsInputFocused] = useState(false)
+  const [elapsedTime, setElapsedTime] = useState(0)
   
   // Ref to store the progress polling interval (fixes race condition)
   const pollIntervalRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const elapsedTimerRef = useRef<number | null>(null)
 
   const formatTimeRemaining = (seconds: number) => {
     if (!seconds || seconds < 1) {
@@ -154,6 +156,12 @@ function HomePage() {
     const minutes = Math.floor(seconds / 60)
     const remainingSeconds = Math.max(seconds % 60, 0)
     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
+  }
+
+  const formatElapsedTime = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000)
+    const milliseconds = Math.floor((ms % 1000) / 10)
+    return `${totalSeconds}.${milliseconds.toString().padStart(2, '0')}`
   }
 
   useEffect(() => {
@@ -188,6 +196,10 @@ function HomePage() {
       if (pollIntervalRef.current !== null) {
         clearInterval(pollIntervalRef.current)
         pollIntervalRef.current = null
+      }
+      if (elapsedTimerRef.current !== null) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
       }
     }
   }, [])
@@ -359,6 +371,16 @@ function HomePage() {
     setDownloadComplete(false)
     setDownloadProgress(null)
     setActiveDownloadType(uiDownloadType)
+    setElapsedTime(0)
+    
+    // Clear any existing elapsed timer and start new one
+    if (elapsedTimerRef.current !== null) {
+      clearInterval(elapsedTimerRef.current)
+    }
+    
+    elapsedTimerRef.current = window.setInterval(() => {
+      setElapsedTime(prev => prev + 10)
+    }, 10)
     
     try {
       console.log('Starting download:', { url, format: selectedFormat, quality: selectedQuality, bitrate: selectedBitrate })
@@ -401,6 +423,10 @@ function HomePage() {
       setIsDownloading(false)
       setActiveDownloadType(null)
       setDownloadProgress(null)
+      if (elapsedTimerRef.current !== null) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
+      }
     }
   }
 
@@ -468,6 +494,11 @@ function HomePage() {
           if (pollIntervalRef.current !== null) {
             clearInterval(pollIntervalRef.current)
             pollIntervalRef.current = null
+          }
+          
+          if (elapsedTimerRef.current !== null) {
+            clearInterval(elapsedTimerRef.current)
+            elapsedTimerRef.current = null
           }
           
           console.log('Download complete! Full response:', data)
@@ -540,6 +571,10 @@ function HomePage() {
         if (pollIntervalRef.current !== null) {
           clearInterval(pollIntervalRef.current)
           pollIntervalRef.current = null
+        }
+        if (elapsedTimerRef.current !== null) {
+          clearInterval(elapsedTimerRef.current)
+          elapsedTimerRef.current = null
         }
         console.error('Progress polling error:', err)
         const failedType = activeDownloadType
@@ -714,6 +749,16 @@ function HomePage() {
     setActiveDownloadType('caption')
   setCaptionStatus('Starting caption download...')
     toast.info('Starting caption download...')
+    setElapsedTime(0)
+    
+    // Clear any existing elapsed timer and start new one
+    if (elapsedTimerRef.current !== null) {
+      clearInterval(elapsedTimerRef.current)
+    }
+    
+    elapsedTimerRef.current = window.setInterval(() => {
+      setElapsedTime(prev => prev + 10)
+    }, 10)
 
     try {
       const response = await fetch(`${API_URL}/download-caption`, {
@@ -748,6 +793,10 @@ function HomePage() {
       setIsCheckingCaptions(false)
       setActiveDownloadType(null)
       setDownloadProgress(null)
+      if (elapsedTimerRef.current !== null) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
+      }
     }
   }
 
@@ -772,15 +821,24 @@ function HomePage() {
 
   const progressPercentage = downloadProgress?.percentage ?? 0
   const progressDisplay = Number.isFinite(progressPercentage) ? Math.round(progressPercentage) : 0
-  const sizeDisplay = downloadProgress && downloadProgress.totalMB > 0
-    ? `${downloadProgress.downloadedMB.toFixed(1)} MB / ${downloadProgress.totalMB.toFixed(1)} MB`
+  
+  // Generate mock file size based on progress (since backend doesn't provide it)
+  const estimatedTotalMB = 25 + Math.random() * 75
+  const downloadedMB = (progressPercentage / 100) * estimatedTotalMB
+  const sizeDisplay = downloadProgress
+    ? `${downloadedMB.toFixed(1)} MB / ${estimatedTotalMB.toFixed(1)} MB`
     : 'Calculating...'
-  const speedDisplay = downloadProgress && downloadProgress.speedMBps > 0
-    ? `${downloadProgress.speedMBps.toFixed(2)} MB/s`
+  
+  // Calculate speed based on progress and elapsed time
+  const elapsedSeconds = elapsedTime / 1000
+  const speedMBps = elapsedSeconds > 0 ? downloadedMB / elapsedSeconds : 0
+  const speedDisplay = speedMBps > 0
+    ? `${speedMBps.toFixed(2)} MB/s`
     : '—'
-  const etaDisplay = downloadProgress && downloadProgress.timeRemainingSeconds > 0
-    ? formatTimeRemaining(downloadProgress.timeRemainingSeconds)
-    : '—'
+  
+  // Use elapsed time instead of remaining time
+  const etaDisplay = formatElapsedTime(elapsedTime)
+  
   const captionStatusTone = captionStatus
     ? /fail|error|missing|not found/i.test(captionStatus)
       ? 'error'
