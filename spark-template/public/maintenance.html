@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaKeepa - Website In Development</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    .container {
+      padding: 40px;
+      max-width: 700px;
+      width: 90%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0px;
+      margin-bottom: 45px;
+      position: relative;
+      top: 50px;
+    }
+
+    .logo-icon {
+      width: 120px;
+      height: 120px;
+      position: relative;
+      top: 5px;
+    }
+
+    .logo-icon svg {
+      width: 100%;
+      height: 100%;
+      fill: #8B5CF6;
+    }
+
+    .logo-text {
+      font-size: 60px;
+      font-weight: 800;
+      color: #1a1a1a;
+      letter-spacing: -1px;
+      margin-top: -5px;
+    }
+
+    .status {
+      font-size: 28px;
+      color: #1a1a1a;
+      font-weight: 600;
+      margin-top: 15px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      position: relative;
+      left: 25px;
+    }
+
+    .dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      background: #1a1a1a;
+      border-radius: 50%;
+      animation: bounce 1.4s infinite ease-in-out;
+    }
+
+    .dot:nth-child(1) {
+      animation-delay: -0.32s;
+    }
+
+    .dot:nth-child(2) {
+      animation-delay: -0.16s;
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: scale(0);
+        opacity: 0.5;
+      }
+      40% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    .subtitle {
+      font-size: 18px;
+      color: #666666;
+      line-height: 1.6;
+      margin-bottom: 4px;
+      position: relative;
+      top: 0px;
+    }
+
+    .contact {
+      font-size: 16px;
+      color: #666666;
+      margin-top: 4px;
+      position: relative;
+      top: -4px;
+    }
+
+    .contact a {
+      color: #1a1a1a;
+      text-decoration: none;
+      font-weight: 600;
+      border-bottom: 1px solid #1a1a1a;
+      transition: opacity 0.3s;
+    }
+
+    .contact a:hover {
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">
+      <div class="logo-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+          <path d="M232,208a8,8,0,0,1-8,8H32a8,8,0,0,1,0-16H224A8,8,0,0,1,232,208Zm0-152V168a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56Zm-68,56a8,8,0,0,0-3.41-6.55l-40-28A8,8,0,0,0,108,84v56a8,8,0,0,0,12.59,6.55l40-28A8,8,0,0,0,164,112Z"></path>
+        </svg>
+      </div>
+      <span class="logo-text">MediaKeepa</span>
+    </div>
+
+    <div class="status">
+      <span>Website In Development</span>
+      <div class="dots">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+    </div>
+
+    <div class="subtitle">
+      We're working hard to bring you an amazing experience!
+    </div>
+
+    <div class="contact">
+      Questions? Email us at <a href="mailto:support@mediakeepa.com">support@mediakeepa.com</a>
+    </div>
+  </div>
+</body>
+</html>
