@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+buildCommand = "cd spark-template && npm install && npm run build && cd .. && pip install -r requirements.txt"
+
+[deploy]
+startCommand = "python server.py"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[[services]]
+name = "mediakeepa"
