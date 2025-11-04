@@ -23,6 +23,10 @@ ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
 DEFAULT_PORT = int(os.environ.get("PORT", "8080"))
 
+# Detect yt-dlp command based on platform
+import platform
+YTDLP_CMD = YTDLP_CMD if platform.system() == "Windows" else "yt-dlp"
+
 if not DIST_FOLDER.exists():
     print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
 
@@ -208,7 +212,7 @@ def resolve_media_title(url, cache_entry=None):
     
     try:
         result = subprocess.run(
-            ["yt-dlp.exe", "--dump-json", "--no-download", "--no-playlist", url],
+            [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist", url],
             capture_output=True,
             text=True,
             timeout=20,
@@ -393,7 +397,7 @@ def perform_download(session_id, url, format_type, quality, output_template, com
                     else:
                         print("⚠️ Cached TikTok metadata incomplete; invoking yt-dlp fallback")
                     # Fallback: fetch metadata again (slower but ensures correctness)
-                    info_command = ["yt-dlp.exe", "--dump-json", "--no-playlist", url]
+                    info_command = [YTDLP_CMD, "--dump-json", "--no-playlist", url]
                     result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
                     result.check_returncode()
                     video_data = json.loads(result.stdout)
@@ -826,7 +830,7 @@ def download():
             # Download thumbnail and convert to requested format
             # Note: yt-dlp will add the extension automatically
             command = [
-                "yt-dlp.exe", url, 
+                YTDLP_CMD, url, 
                 "--write-thumbnail", 
                 "--skip-download",  # Don't download video
                 "--convert-thumbnails", file_extension,
@@ -844,7 +848,7 @@ def download():
             
             # Base command with --no-playlist to prevent downloading entire playlists
             command = [
-                "yt-dlp.exe", url, 
+                YTDLP_CMD, url, 
                 "-o", output_template, 
                 "--no-playlist"
             ]
@@ -1038,7 +1042,7 @@ def video_info():
     try:
         # Use yt-dlp to get video info in JSON format (FAST - no download)
         # For YouTube, explicitly ignore playlist to speed up and use a client that exposes HLS without PO tokens
-        command = ["yt-dlp.exe", "--dump-json", "--no-download", "--no-playlist"]
+        command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist"]
         if "youtube.com" in url or "youtu.be" in url:
             command += ["--extractor-args", "youtube:player_client=web_safari"]
         command.append(url)
@@ -1399,7 +1403,7 @@ def get_video_url():
     
     try:
         # Use yt-dlp to get the best video URL (medium quality for preview)
-        command = ["yt-dlp.exe", "--get-url", "-f", "best[height<=720]/best", url]
+        command = [YTDLP_CMD, "--get-url", "-f", "best[height<=720]/best", url]
         
         print(f"\n=== FETCHING VIDEO STREAM URL ===")
         print(f"URL: {url}")
@@ -1521,7 +1525,7 @@ def stream_video(session_id):
             format_string = "best[height<=720][ext=mp4]/best[height<=720]/best"
         
         cmd = [
-            "yt-dlp.exe",
+            YTDLP_CMD,
             "-f", format_string,
             "-o", "-",  # Output to stdout
             video_url
@@ -1680,7 +1684,7 @@ def check_caption_availability(url):
     """
     try:
         # Run yt-dlp --list-subs to get available captions
-        command = ["yt-dlp.exe", "--list-subs", url, "--no-playlist"]
+        command = [YTDLP_CMD, "--list-subs", url, "--no-playlist"]
         
         result = subprocess.run(
             command,
@@ -1817,7 +1821,7 @@ def perform_caption_check(session_id, url):
         download_progress[session_id]["message"] = "Fetching subtitle information..."
         
         # Run yt-dlp --list-subs to get available captions
-        command = ["yt-dlp.exe", "--list-subs", url, "--no-playlist"]
+        command = [YTDLP_CMD, "--list-subs", url, "--no-playlist"]
         print(f"Running command: {' '.join(command)}")
         
         download_progress[session_id]["progress"] = "50"
@@ -2046,7 +2050,7 @@ def download_caption():
         
         # Build yt-dlp command for caption download
         command = [
-            "yt-dlp.exe",
+            YTDLP_CMD,
             url,
             "--write-sub",              # Download subtitles
             "--sub-lang", language,     # Specific language
