@@ -3,7 +3,8 @@ nixPkgs = ["python311", "nodejs_22"]
 
 [phases.install]
 cmds = [
-  "pip install -r requirements.txt",
+  "python -m venv /opt/venv",
+  ". /opt/venv/bin/activate && pip install -r requirements.txt",
   "cd spark-template && npm install && npm run build && cd .."
 ]
 
@@ -11,4 +12,4 @@ cmds = [
 cmds = []
 
 [start]
-cmd = "python server.py"
+cmd = ". /opt/venv/bin/activate && python server.py"
