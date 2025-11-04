@@ -967,6 +967,7 @@ def download():
 def get_download_progress(session_id):
     """Get the current progress of a download session"""
     if session_id not in download_progress:
+        print(f"⚠️  Progress requested for unknown session: {session_id}")
         return jsonify({"status": "error", "message": "Session not found"}), 404
     
     return jsonify(download_progress[session_id])
