@@ -18,6 +18,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import secrets
 import atexit
+import base64
+from urllib.parse import urlparse
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
@@ -90,6 +92,95 @@ download_progress = {}
 # thread; having a small worker pool protects the server from being overwhelmed.
 download_executor = ThreadPoolExecutor(max_workers=3)
 atexit.register(lambda: download_executor.shutdown(wait=False))
+
+YOUTUBE_COOKIE_DOMAINS = (
+    "youtube.com",
+    "youtu.be",
+    "music.youtube.com",
+    "youtube-nocookie.com",
+)
+
+
+def resolve_youtube_cookies():
+    """Resolve a usable cookies file for yt-dlp YouTube requests."""
+    path_override = os.environ.get("YT_COOKIES_FILE")
+    if path_override:
+        candidate = Path(path_override)
+        if not candidate.is_absolute():
+            candidate = (ROOT_DIR / candidate).resolve()
+        if candidate.exists():
+            print(f"🍪 Using YouTube cookies from {candidate}")
+            return str(candidate)
+        print(f"⚠️  YT_COOKIES_FILE set but file not found: {candidate}")
+
+    cookies_b64 = os.environ.get("YT_COOKIES_B64")
+    if cookies_b64:
+        target_path = ROOT_DIR / "youtube_cookies.txt"
+        try:
+            decoded_bytes = base64.b64decode(cookies_b64)
+            target_path.write_bytes(decoded_bytes)
+            print(f"🍪 Loaded YouTube cookies from YT_COOKIES_B64 into {target_path}")
+            return str(target_path)
+        except Exception as exc:
+            print(f"⚠️  Failed to decode YT_COOKIES_B64: {exc}")
+
+    default_path = ROOT_DIR / "youtube_cookies.txt"
+    if default_path.exists():
+        print(f"🍪 Using local YouTube cookies file at {default_path}")
+        return str(default_path)
+
+    return None
+
+
+YOUTUBE_COOKIES_PATH = resolve_youtube_cookies()
+missing_youtube_cookies_logged = False
+
+
+def is_youtube_url(url):
+    if not url:
+        return False
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except Exception:
+        hostname = str(url).lower()
+    for domain in YOUTUBE_COOKIE_DOMAINS:
+        if hostname == domain or hostname.endswith(f".{domain}"):
+            return True
+    return False
+
+
+def inject_youtube_cookies(command, url=None):
+    """Inject --cookies argument for YouTube downloads when configured."""
+    global missing_youtube_cookies_logged
+
+    if not isinstance(command, list):
+        command = list(command)
+
+    if not YOUTUBE_COOKIES_PATH:
+        if url and is_youtube_url(url) and not missing_youtube_cookies_logged:
+            print("⚠️  YouTube cookies not configured. Authenticated downloads may fail.")
+            missing_youtube_cookies_logged = True
+        return command
+
+    if url and not is_youtube_url(url):
+        return command
+
+    if "--cookies" in command:
+        return command
+
+    cookies_args = ["--cookies", YOUTUBE_COOKIES_PATH]
+
+    if url:
+        try:
+            idx = command.index(url)
+        except ValueError:
+            idx = None
+        if idx is not None:
+            command[idx:idx] = cookies_args
+            return command
+
+    command.extend(cookies_args)
+    return command
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
@@ -211,8 +302,10 @@ def resolve_media_title(url, cache_entry=None):
             return title
     
     try:
+        command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist", url]
+        command = inject_youtube_cookies(command, url)
         result = subprocess.run(
-            [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist", url],
+            command,
             capture_output=True,
             text=True,
             timeout=20,
@@ -398,6 +491,7 @@ def perform_download(session_id, url, format_type, quality, output_template, com
                         print("⚠️ Cached TikTok metadata incomplete; invoking yt-dlp fallback")
                     # Fallback: fetch metadata again (slower but ensures correctness)
                     info_command = [YTDLP_CMD, "--dump-json", "--no-playlist", url]
+                    info_command = inject_youtube_cookies(info_command, url)
                     result = subprocess.run(info_command, capture_output=True, text=True, timeout=30)
                     result.check_returncode()
                     video_data = json.loads(result.stdout)
@@ -462,6 +556,8 @@ def perform_download(session_id, url, format_type, quality, output_template, com
                 print(f"⚠ TikTok thumbnail download failed, falling back to yt-dlp: {e}")
                 # Continue with normal yt-dlp command below
         
+        command = inject_youtube_cookies(command, url)
+
         print(f"Running command: {' '.join(command)}")
         
         # Run the download with real-time output
@@ -1047,6 +1143,7 @@ def video_info():
         if "youtube.com" in url or "youtu.be" in url:
             command += ["--extractor-args", "youtube:player_client=web_safari"]
         command.append(url)
+        command = inject_youtube_cookies(command, url)
         
         print(f"\n=== FETCHING VIDEO INFO ===")
         print(f"URL: {url}")
@@ -1405,6 +1502,7 @@ def get_video_url():
     try:
         # Use yt-dlp to get the best video URL (medium quality for preview)
         command = [YTDLP_CMD, "--get-url", "-f", "best[height<=720]/best", url]
+        command = inject_youtube_cookies(command, url)
         
         print(f"\n=== FETCHING VIDEO STREAM URL ===")
         print(f"URL: {url}")
@@ -1531,6 +1629,7 @@ def stream_video(session_id):
             "-o", "-",  # Output to stdout
             video_url
         ]
+        cmd = inject_youtube_cookies(cmd, video_url)
         
         # Start yt-dlp process
         process = subprocess.Popen(
@@ -1686,7 +1785,8 @@ def check_caption_availability(url):
     try:
         # Run yt-dlp --list-subs to get available captions
         command = [YTDLP_CMD, "--list-subs", url, "--no-playlist"]
-        
+        command = inject_youtube_cookies(command, url)
+
         result = subprocess.run(
             command,
             capture_output=True,
@@ -1823,6 +1923,7 @@ def perform_caption_check(session_id, url):
         
         # Run yt-dlp --list-subs to get available captions
         command = [YTDLP_CMD, "--list-subs", url, "--no-playlist"]
+        command = inject_youtube_cookies(command, url)
         print(f"Running command: {' '.join(command)}")
         
         download_progress[session_id]["progress"] = "50"
@@ -2061,6 +2162,7 @@ def download_caption():
             "-o", output_template,
             "--convert-subs", download_format  # Convert to requested format if needed
         ]
+        command = inject_youtube_cookies(command, url)
         
         print(f"Running command: {' '.join(command)}")
         
