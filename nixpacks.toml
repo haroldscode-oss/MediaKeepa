@@ -1,3 +1,4 @@
+# Fix for Rollup optional dependency issue - clean install required
 [phases.setup]
 nixPkgs = ["python311", "nodejs_22"]
 
