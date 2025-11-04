@@ -449,7 +449,16 @@ function HomePage() {
         const response = await fetch(`${API_URL}/download-progress/${sid}`)
         const data = await response.json()
         
+        // If session not found, assume download completed and was cleaned up
         if (!response.ok) {
+          if (response.status === 404) {
+            // Session cleaned up, stop polling
+            if (pollIntervalRef.current !== null) {
+              clearInterval(pollIntervalRef.current)
+              pollIntervalRef.current = null
+            }
+            return
+          }
           throw new Error('Failed to get progress')
         }
 
