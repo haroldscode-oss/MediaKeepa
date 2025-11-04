@@ -2191,10 +2191,18 @@ def download_caption():
         }), 500
 
 
-if __name__ == "__main__":
-    # Start cleanup thread for automatic file deletion
+# Gunicorn configuration hook - starts cleanup thread when workers spawn
+def on_starting(server):
+    """Called just before the master process is initialized."""
     cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
     cleanup_thread.start()
     print("🧹 Auto-cleanup thread started (checks every 5 minutes)")
-    
-    app.run(debug=False, host='0.0.0.0', port=DEFAULT_PORT)
+
+
+# Cleanup thread is started by Gunicorn worker hook instead
+# This prevents the Flask dev server from running
+if __name__ == "__main__":
+    print("⚠️  Do not run server.py directly. Use: gunicorn server:app")
+    print("🚀 For Railway deployment, this should run automatically via Procfile")
+    import sys
+    sys.exit(1)
