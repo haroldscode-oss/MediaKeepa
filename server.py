@@ -108,6 +108,33 @@ YOUTUBE_PLAYER_CLIENTS = [
 ]
 
 
+def resolve_quality_height(value):
+    """Convert UI quality labels (e.g., 8K) to numeric heights for yt-dlp filters."""
+    if not value:
+        return None
+
+    normalized = str(value).strip().lower()
+    overrides = {
+        "8k": 4320,
+        "4320p": 4320,
+        "4k": 2160,
+        "2160p": 2160,
+        "2k": 1440,
+    }
+
+    if normalized in overrides:
+        return overrides[normalized]
+
+    digits_only = ''.join(ch for ch in normalized if ch.isdigit())
+    if digits_only:
+        try:
+            return int(digits_only)
+        except ValueError:
+            return None
+
+    return None
+
+
 def resolve_youtube_cookies():
     """Resolve a usable cookies file for yt-dlp YouTube requests."""
     path_override = os.environ.get("YT_COOKIES_FILE")
@@ -496,7 +523,7 @@ try:
 except Exception as e:
     print(f"⚠️  Startup cleanup warning: {e}")
 
-def perform_download(session_id, url, format_type, quality, output_template, command, cache_entry=None, retry_count=0):
+def perform_download(session_id, url, format_type, quality, output_template, base_command, preferred_clients=None, cache_entry=None, retry_count=0):
     """
     Perform the actual download in a background thread and track progress
     Includes retry logic and detailed error messages
@@ -606,93 +633,101 @@ def perform_download(session_id, url, format_type, quality, output_template, com
                 print(f"⚠ TikTok thumbnail download failed, falling back to yt-dlp: {e}")
                 # Continue with normal yt-dlp command below
         
-        command = inject_youtube_cookies(command, url)
+        clients = preferred_clients or [None]
+        last_error_lower = ""
+        last_user_message = "Unable to download this video. Please try a different link."
+        success = False
+        successful_client = None
 
-        print(f"Running command: {' '.join(command)}")
-        
-        # Run the download with real-time output
-        # Capture both stdout and stderr separately for better error messages
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-        
-        # Collect all output for error messages
-        stdout_lines = []
-        stderr_lines = []
-        
-        # Read stdout in real-time to track progress
         import select
         import sys
-        
-        # For Windows, we need to handle this differently
-        if sys.platform == 'win32':
-            # Parse output in real-time to track progress
-            for line in process.stdout:
-                stdout_lines.append(line)
-                print(line.strip())
-                
-                # Parse yt-dlp progress line (format: [download]  12.3% of 45.67MiB at 1.23MiB/s ETA 00:12)
-                if '[download]' in line and '%' in line:
-                    try:
-                        # Extract percentage
-                        if line.strip().startswith('[download]'):
-                            parts = line.split()
-                            for i, part in enumerate(parts):
-                                if '%' in part:
-                                    percent_str = part.replace('%', '')
-                                    progress_value = float(percent_str)
-                                    download_progress[session_id]['progress'] = min(progress_value, 100)
-                                    download_progress[session_id]['message'] = f'Downloading... {progress_value:.1f}%'
-                                    break
-                    except:
-                        pass
-            
-            # Read any remaining stderr
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                stderr_lines = stderr_output.split('\n')
-        else:
-            # Unix-like systems can use select
-            while True:
-                reads = [process.stdout.fileno(), process.stderr.fileno()]
-                ret = select.select(reads, [], [])
-                
-                for fd in ret[0]:
-                    if fd == process.stdout.fileno():
-                        line = process.stdout.readline()
-                        if line:
-                            stdout_lines.append(line)
-                            print(line.strip())
-                            
-                            if '[download]' in line and '%' in line:
-                                try:
-                                    if line.strip().startswith('[download]'):
-                                        parts = line.split()
-                                        for i, part in enumerate(parts):
-                                            if '%' in part:
-                                                percent_str = part.replace('%', '')
-                                                progress_value = float(percent_str)
-                                                download_progress[session_id]['progress'] = min(progress_value, 100)
-                                                download_progress[session_id]['message'] = f'Downloading... {progress_value:.1f}%'
-                                                break
-                                except:
-                                    pass
-                    if fd == process.stderr.fileno():
-                        line = process.stderr.readline()
-                        if line:
-                            stderr_lines.append(line)
-                
-                if process.poll() is not None:
-                    break
-        
-        process.wait()
-        
-        if process.returncode != 0:
-            # Log technical details for debugging (server-side only)
+
+        for idx, client in enumerate(clients):
+            command = build_yt_dlp_command(base_command, url, client)
+            client_label = client or "default"
+
+            if idx > 0:
+                download_progress[session_id]['status'] = 'downloading'
+                download_progress[session_id]['message'] = f"Retrying with YouTube client {client_label}..."
+                download_progress[session_id]['progress'] = 0
+
+            print(f"Running command ({client_label}): {' '.join(command)}")
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+
+            stdout_lines = []
+            stderr_lines = []
+
+            if sys.platform == 'win32':
+                for line in process.stdout:
+                    stdout_lines.append(line)
+                    print(line.strip())
+
+                    if '[download]' in line and '%' in line:
+                        try:
+                            if line.strip().startswith('[download]'):
+                                parts = line.split()
+                                for part in parts:
+                                    if '%' in part:
+                                        percent_str = part.replace('%', '')
+                                        progress_value = float(percent_str)
+                                        download_progress[session_id]['progress'] = min(progress_value, 100)
+                                        download_progress[session_id]['message'] = f'Downloading... {progress_value:.1f}%'
+                                        break
+                        except Exception:
+                            pass
+
+                stderr_output = process.stderr.read()
+                if stderr_output:
+                    stderr_lines = stderr_output.split('\n')
+            else:
+                while True:
+                    reads = [process.stdout.fileno(), process.stderr.fileno()]
+                    ret = select.select(reads, [], [])
+
+                    for fd in ret[0]:
+                        if fd == process.stdout.fileno():
+                            line = process.stdout.readline()
+                            if line:
+                                stdout_lines.append(line)
+                                print(line.strip())
+
+                                if '[download]' in line and '%' in line:
+                                    try:
+                                        if line.strip().startswith('[download]'):
+                                            parts = line.split()
+                                            for part in parts:
+                                                if '%' in part:
+                                                    percent_str = part.replace('%', '')
+                                                    progress_value = float(percent_str)
+                                                    download_progress[session_id]['progress'] = min(progress_value, 100)
+                                                    download_progress[session_id]['message'] = f'Downloading... {progress_value:.1f}%'
+                                                    break
+                                    except Exception:
+                                        pass
+                        if fd == process.stderr.fileno():
+                            line = process.stderr.readline()
+                            if line:
+                                stderr_lines.append(line)
+
+                    if process.poll() is not None:
+                        break
+
+            process.wait()
+
+            if process.returncode == 0:
+                success = True
+                successful_client = client_label
+                if client_label != "default":
+                    print(f"✅ download: client '{client_label}' succeeded")
+                break
+
             all_output = stderr_lines + stdout_lines
             technical_error = ""
             for line in all_output:
@@ -702,15 +737,14 @@ def perform_download(session_id, url, format_type, quality, output_template, com
                     if technical_error.startswith('ERROR:'):
                         technical_error = technical_error[6:].strip()
                     break
-            
-            # Print technical error for server logs only
+
             if technical_error:
-                print(f"🔧 Technical error (internal): {technical_error}")
-            
-            # Determine user-friendly error message (never show technical details)
+                print(f"⚠️ download: client '{client_label}' failed: {technical_error}")
+            else:
+                print(f"⚠️ download: client '{client_label}' exited with code {process.returncode}")
+
             error_message_lower = technical_error.lower() if technical_error else ""
-            
-            # Provide clean, professional error messages for users
+
             if '403' in error_message_lower or 'forbidden' in error_message_lower:
                 user_message = "Unable to download. Please try again in a few moments."
             elif '404' in error_message_lower or 'not found' in error_message_lower:
@@ -728,33 +762,48 @@ def perform_download(session_id, url, format_type, quality, output_template, com
             elif 'format' in error_message_lower or 'quality' in error_message_lower:
                 user_message = "Requested quality not available. Please try a different quality."
             else:
-                # Generic fallback message for any other error
                 user_message = "Unable to download this video. Please try a different link."
-            
-            # Implement retry logic for transient errors
+
+            last_user_message = user_message
+            last_error_lower = error_message_lower
+
+            if idx < len(clients) - 1:
+                continue
+
+        if not success:
             if retry_count < MAX_RETRIES:
-                # Only retry on errors that might be transient
-                should_retry = any(x in error_message_lower for x in ['403', 'forbidden', 'timeout', 'connection', 'network'])
-                
+                should_retry = any(x in last_error_lower for x in ['403', 'forbidden', 'timeout', 'connection', 'network'])
+
                 if should_retry:
                     retry_count += 1
-                    retry_delay = RETRY_DELAY_BASE ** retry_count  # Exponential backoff: 2s, 4s, 8s
-                    
+                    retry_delay = RETRY_DELAY_BASE ** retry_count
+
                     print(f"⚠️ Download failed, retrying ({retry_count}/{MAX_RETRIES}) after {retry_delay}s...")
-                    download_progress[session_id]['message'] = f'Retrying...'
-                    
+                    download_progress[session_id]['message'] = 'Retrying...'
+
                     time.sleep(retry_delay)
-                    
-                    # Retry the download
-                    return perform_download(session_id, url, format_type, quality, output_template, command, cache_entry, retry_count)
-            
-            # If we've exhausted retries or shouldn't retry, show user-friendly error
+
+                    return perform_download(
+                        session_id,
+                        url,
+                        format_type,
+                        quality,
+                        output_template,
+                        base_command,
+                        preferred_clients,
+                        cache_entry,
+                        retry_count
+                    )
+
             download_progress[session_id]['status'] = 'error'
-            download_progress[session_id]['message'] = user_message
+            download_progress[session_id]['message'] = last_user_message
             download_progress[session_id]['progress'] = 0
-            print(f"❌ Download failed (user message): {user_message}")
+            print(f"❌ Download failed (user message): {last_user_message}")
             return
-        
+
+        if successful_client and successful_client != "default":
+            print(f"🎯 Downloading with YouTube client '{successful_client}'")
+
         print(f"Download completed successfully!")
         
         # Update progress to show we're processing the file
@@ -999,15 +1048,8 @@ def download():
                 "--no-playlist"
             ]
 
-        # Normalize quality to numeric height when possible (e.g., "720p", "8K")
-        quality_height = None
-        if quality:
-            digits_only = ''.join(ch for ch in str(quality) if ch.isdigit())
-            if digits_only:
-                try:
-                    quality_height = int(digits_only)
-                except ValueError:
-                    quality_height = None
+        quality_height = resolve_quality_height(quality)
+        quality_filter = quality_height or quality
 
         # Audio formats handling
         if format_type in ["mp3", "m4a", "flac"]:
@@ -1027,12 +1069,12 @@ def download():
                 # Get best video at requested quality + best audio
                 if format_type == "webm":
                     # For WEBM, prefer VP9/VP8 video codec + opus/vorbis audio
-                    format_string = f"bestvideo[height<={quality}][ext=webm]+bestaudio[ext=webm]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                    format_string = f"bestvideo[height<={quality_filter}][ext=webm]+bestaudio[ext=webm]/bestvideo[height<={quality_filter}]+bestaudio/best[height<={quality_filter}]/best"
                     command += ["-f", format_string, "--merge-output-format", "webm"]
                     print(f"Download mode: Video (WEBM) - Quality: {quality}p with audio")
                 elif format_type == "mkv":
                     # For MKV, get best available (MKV supports any codec)
-                    format_string = f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                    format_string = f"bestvideo[height<={quality_filter}]+bestaudio/best[height<={quality_filter}]/best"
                     command += ["-f", format_string, "--merge-output-format", "mkv"]
                     print(f"Download mode: Video (MKV) - Quality: {quality}p with audio")
                 else:  # mp4
@@ -1046,7 +1088,7 @@ def download():
                         print(f"Download mode: YouTube Video (MP4) - Quality: {quality if quality else 'auto'} with audio")
                     else:
                         # For MP4, prefer MP4 container formats to avoid audio issues
-                        format_string = f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best"
+                        format_string = f"bestvideo[height<={quality_filter}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality_filter}]+bestaudio/best[height<={quality_filter}]/best"
                         command += ["-f", format_string, "--merge-output-format", "mp4", "--recode-video", "mp4"]
                         print(f"Download mode: Video (MP4) - Quality: {quality}p with audio")
             else:
@@ -1066,9 +1108,13 @@ def download():
                         command += ["-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "--merge-output-format", "mp4", "--recode-video", "mp4"]
                         print("Download mode: Video (MP4) - Best quality with audio")
 
-        # Apply YouTube-specific extractor args to reduce 403 issues without PO tokens
-        if is_youtube_url:
-            command += ["--extractor-args", "youtube:player_client=tv"]
+        base_command = command.copy()
+        try:
+            base_command.remove(url)
+        except ValueError:
+            pass
+
+        preferred_clients = YOUTUBE_PLAYER_CLIENTS if is_youtube_url else None
 
         # Start download in background thread
         # Offload TikTok thumbnail downloads to the background queue; thumbnails from other
@@ -1081,14 +1127,15 @@ def download():
                 format_type,
                 quality,
                 output_template,
-                command,
+                base_command,
+                preferred_clients,
                 cache_entry
             )
             job.add_done_callback(lambda fut: fut.exception() and print(f"⚠️  Background TikTok job error: {fut.exception()}"))
         else:
             download_thread = threading.Thread(
                 target=perform_download,
-                args=(session_id, url, format_type, quality, output_template, command, cache_entry)
+                args=(session_id, url, format_type, quality, output_template, base_command, preferred_clients, cache_entry)
             )
             download_thread.daemon = True
             download_thread.start()
