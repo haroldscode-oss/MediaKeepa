@@ -164,6 +164,8 @@ function HomePage() {
   const pollIntervalRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const elapsedTimerRef = useRef<number | null>(null)
+  const completedSessionRef = useRef<string | null>(null)
+  const downloadInFlightRef = useRef(false) // stops duplicate download firing
 
   const formatTimeRemaining = (seconds: number) => {
     if (!seconds || seconds < 1) {
@@ -378,6 +380,13 @@ function HomePage() {
 
   const handleDownload = async () => {
     if (!selectedFormat || !url) return
+
+    if (downloadInFlightRef.current) {
+      return
+    }
+    downloadInFlightRef.current = true
+
+    completedSessionRef.current = null
     
     const isVideo = VIDEO_FORMATS.includes(selectedFormat)
     const isAudio = AUDIO_FORMATS.includes(selectedFormat)
@@ -436,6 +445,7 @@ function HomePage() {
 
       const newSessionId = data.session_id
       setSessionId(newSessionId)
+      completedSessionRef.current = null
       
       console.log('Download started, session ID:', newSessionId)
       toast.success('Download started!', {
@@ -456,6 +466,7 @@ function HomePage() {
       setIsDownloading(false)
       setActiveDownloadType(null)
       setDownloadProgress(null)
+      downloadInFlightRef.current = false
       if (elapsedTimerRef.current !== null) {
         clearInterval(elapsedTimerRef.current)
         elapsedTimerRef.current = null
@@ -485,6 +496,7 @@ function HomePage() {
             clearInterval(elapsedTimerRef.current)
             elapsedTimerRef.current = null
           }
+          downloadInFlightRef.current = false
           return
         }
         
@@ -550,6 +562,11 @@ function HomePage() {
             elapsedTimerRef.current = null
           }
           
+          if (completedSessionRef.current === sid) {
+            return
+          }
+          completedSessionRef.current = sid
+
           console.log('Download complete! Full response:', data)
 
           const finishedType = activeDownloadType
@@ -558,6 +575,7 @@ function HomePage() {
             setIsDownloading(false)
             setDownloadComplete(true)
             setActiveDownloadType(null)
+            downloadInFlightRef.current = false
             if (finishedType === 'caption') {
               toast.dismiss(TOAST_IDS.captionDownloadStart)
               setCaptionStatus('Caption downloaded successfully!')
@@ -645,6 +663,7 @@ function HomePage() {
         }
         setIsDownloading(false)
         setActiveDownloadType(null)
+        downloadInFlightRef.current = false
       }
     }, 500) // Poll every 500ms
   }
@@ -819,6 +838,12 @@ function HomePage() {
   const handleCaptionDownload = async () => {
     if (!selectedLanguage || !url || !selectedCaptionFormat) return
 
+    if (downloadInFlightRef.current) {
+      return
+    }
+    downloadInFlightRef.current = true
+    completedSessionRef.current = null
+
     setIsCheckingCaptions(false)
     setIsDownloading(true)
     setDownloadProgress(null)
@@ -867,6 +892,7 @@ function HomePage() {
       if (data.status === 'started' && data.session_id) {
         const newSessionId = data.session_id
         setSessionId(newSessionId)
+        completedSessionRef.current = null
         pollDownloadProgress(newSessionId)
       } else {
         throw new Error('Invalid response from server')
@@ -883,6 +909,7 @@ function HomePage() {
       setIsCheckingCaptions(false)
       setActiveDownloadType(null)
       setDownloadProgress(null)
+      downloadInFlightRef.current = false
       if (elapsedTimerRef.current !== null) {
         clearInterval(elapsedTimerRef.current)
         elapsedTimerRef.current = null
