@@ -90,6 +90,19 @@ const selectTopLanguages = (languages: Language[]): Language[] => {
   return prioritized
 }
 
+const TOAST_IDS = {
+  videoInfoError: "video-info-error",
+  downloadStart: "download-start",
+  downloadComplete: "download-complete",
+  downloadError: "download-error",
+  progressError: "download-progress-error",
+  captionChecking: "caption-checking",
+  captionInfo: "caption-info",
+  captionError: "caption-error",
+  captionDownloadStart: "caption-download-start",
+  captionDownloadError: "caption-download-error",
+} as const
+
 type VideoInfo = {
   title: string
   thumbnail: string
@@ -226,6 +239,7 @@ function HomePage() {
   const fetchVideoInfo = async (videoUrl: string) => {
     setIsLoading(true)
     setError("")
+    toast.dismiss(TOAST_IDS.videoInfoError)
     // Reset download states when fetching new video
     setDownloadComplete(false)
     setDownloadProgress(null)
@@ -316,7 +330,9 @@ function HomePage() {
     } catch (err) {
       console.error('Error fetching video info:', err)
       setError(err instanceof Error ? err.message : "Failed to fetch media information. Please check the URL and try again.")
-      toast.error("Failed to fetch media information")
+      toast.error("Failed to fetch media information", {
+        id: TOAST_IDS.videoInfoError,
+      })
       setVideoInfo(null)
     } finally {
       setIsLoading(false)
@@ -377,6 +393,9 @@ function HomePage() {
     setElapsedTime(0)
     setPreviousProgress(0)
     setPreviousTime(0)
+    toast.dismiss(TOAST_IDS.downloadError)
+    toast.dismiss(TOAST_IDS.downloadComplete)
+    toast.dismiss(TOAST_IDS.downloadStart)
     
     // Set a random but consistent total file size for this download
     setEstimatedTotalMB(25 + Math.random() * 75)
@@ -419,7 +438,10 @@ function HomePage() {
       setSessionId(newSessionId)
       
       console.log('Download started, session ID:', newSessionId)
-      toast.success('Download started!')
+      toast.success('Download started!', {
+        id: TOAST_IDS.downloadStart,
+        duration: 2000,
+      })
       
       // Poll for progress updates
       pollDownloadProgress(newSessionId)
@@ -427,7 +449,10 @@ function HomePage() {
     } catch (err) {
       console.error('Download error:', err)
       setError(err instanceof Error ? err.message : 'Download failed')
-      toast.error(err instanceof Error ? err.message : 'Download failed')
+      toast.dismiss(TOAST_IDS.downloadStart)
+      toast.error(err instanceof Error ? err.message : 'Download failed', {
+        id: TOAST_IDS.downloadError,
+      })
       setIsDownloading(false)
       setActiveDownloadType(null)
       setDownloadProgress(null)
@@ -534,11 +559,15 @@ function HomePage() {
             setDownloadComplete(true)
             setActiveDownloadType(null)
             if (finishedType === 'caption') {
+              toast.dismiss(TOAST_IDS.captionDownloadStart)
               setCaptionStatus('Caption downloaded successfully!')
             }
             
             // Show success toast notification
+            toast.dismiss(TOAST_IDS.downloadStart)
+            toast.dismiss(TOAST_IDS.downloadError)
             toast.success('Download Complete!', {
+              id: TOAST_IDS.downloadComplete,
               description: 'Your file has been downloaded successfully.',
               duration: 4000,
             })
@@ -561,6 +590,7 @@ function HomePage() {
                 console.error('Download trigger error:', err)
                 setError('Failed to download file')
                 toast.error('Download Failed', {
+                  id: TOAST_IDS.downloadError,
                   description: 'Failed to download file. Please try again.',
                   duration: 4000,
                 })
@@ -572,6 +602,7 @@ function HomePage() {
               console.error('No filename in response! Response:', data)
               setError('Download completed but filename not found')
               toast.error('Download Error', {
+                id: TOAST_IDS.downloadError,
                 description: 'Download completed but filename not found.',
                 duration: 4000,
               })
@@ -603,7 +634,9 @@ function HomePage() {
         console.error('Progress polling error:', err)
         const failedType = activeDownloadType
         setError(err instanceof Error ? err.message : 'Download failed')
+        toast.dismiss(TOAST_IDS.downloadStart)
         toast.error('Download Failed', {
+          id: TOAST_IDS.progressError,
           description: err instanceof Error ? err.message : 'Download failed. Please try again.',
           duration: 4000,
         })
@@ -624,12 +657,16 @@ function HomePage() {
      (isAudioFormat && selectedBitrate) || 
      isImageFormat)
   const shouldShowRecentUrls = !url && !isLoading && !videoInfo && isInputFocused
+  const canStartDownload = Boolean(canDownload && !isDownloading)
 
   const handleCaptionsClick = async () => {
     setCaptionsSelected(true)
     setDownloadProgress(null)
     setDownloadComplete(false)
     setActiveDownloadType(null)
+    toast.dismiss(TOAST_IDS.captionError)
+    toast.dismiss(TOAST_IDS.captionInfo)
+    toast.dismiss(TOAST_IDS.captionChecking)
 
     if (pollIntervalRef.current !== null) {
       clearInterval(pollIntervalRef.current)
@@ -647,8 +684,11 @@ function HomePage() {
     // Start caption check with progress feedback
     setIsCheckingCaptions(true)
     setSelectedLanguage("")
-  setCaptionStatus('Checking for captions...')
-    toast.info('Checking for captions...')
+    setCaptionStatus('Checking for captions...')
+    toast.info('Checking for captions...', {
+      id: TOAST_IDS.captionChecking,
+      duration: 2000,
+    })
     
     try {
       console.log('Starting caption check for:', url)
@@ -706,6 +746,7 @@ function HomePage() {
               
               setIsCheckingCaptions(false)
               setDownloadProgress(null)
+              toast.dismiss(TOAST_IDS.captionChecking)
               
               if (progressData.has_captions && progressData.languages) {
                 const topLanguages = selectTopLanguages(progressData.languages)
@@ -714,7 +755,10 @@ function HomePage() {
                   const languageCount = topLanguages.length
                   const message = `Found ${languageCount} caption language${languageCount > 1 ? 's' : ''}!`
                   setCaptionStatus(`Found ${languageCount} caption language${languageCount > 1 ? 's' : ''}.`)
-                  toast.success(message)
+                  toast.success(message, {
+                    id: TOAST_IDS.captionInfo,
+                    duration: 3000,
+                  })
                   console.log(`✓ Showing top languages:`, topLanguages.map((lang) => lang.code))
                 } else {
                   setCaptionStatus('Captions available, but none match the language list.')
@@ -723,7 +767,10 @@ function HomePage() {
               } else {
                 setAvailableLanguages([])
                 setCaptionStatus('No captions available for this video.')
-                toast.info('No captions available for this video')
+                toast.info('No captions available for this video', {
+                  id: TOAST_IDS.captionInfo,
+                  duration: 3000,
+                })
                 console.log('✗ No captions found')
               }
             }
@@ -744,7 +791,10 @@ function HomePage() {
             }
             console.error('Caption check polling error:', err)
             setCaptionStatus('Failed to check captions. Please try again.')
-            toast.error('Failed to check captions')
+            toast.error('Failed to check captions', {
+              id: TOAST_IDS.captionError,
+            })
+            toast.dismiss(TOAST_IDS.captionChecking)
             setIsCheckingCaptions(false)
             setDownloadProgress(null)
           }
@@ -757,7 +807,10 @@ function HomePage() {
     } catch (err) {
       console.error('Error starting caption check:', err)
       setCaptionStatus(err instanceof Error ? err.message : 'Failed to check captions')
-      toast.error(err instanceof Error ? err.message : 'Failed to check captions')
+      toast.error(err instanceof Error ? err.message : 'Failed to check captions', {
+        id: TOAST_IDS.captionError,
+      })
+        toast.dismiss(TOAST_IDS.captionChecking)
       setIsCheckingCaptions(false)
       setDownloadProgress(null)
     }
@@ -771,8 +824,13 @@ function HomePage() {
     setDownloadProgress(null)
     setDownloadComplete(false)
     setActiveDownloadType('caption')
-  setCaptionStatus('Starting caption download...')
-    toast.info('Starting caption download...')
+    setCaptionStatus('Starting caption download...')
+    toast.dismiss(TOAST_IDS.captionDownloadError)
+    toast.dismiss(TOAST_IDS.captionDownloadStart)
+    toast.info('Starting caption download...', {
+      id: TOAST_IDS.captionDownloadStart,
+      duration: 2000,
+    })
     setElapsedTime(0)
     setPreviousProgress(0)
     setPreviousTime(0)
@@ -817,7 +875,10 @@ function HomePage() {
       console.error('Error downloading caption:', error)
       setCaptionStatus(error instanceof Error ? error.message : 'Failed to download caption')
       setError(error instanceof Error ? error.message : 'Failed to download caption')
-      toast.error('Failed to download caption')
+      toast.dismiss(TOAST_IDS.captionDownloadStart)
+      toast.error('Failed to download caption', {
+        id: TOAST_IDS.captionDownloadError,
+      })
       setIsDownloading(false)
       setIsCheckingCaptions(false)
       setActiveDownloadType(null)
@@ -1176,7 +1237,7 @@ function HomePage() {
                 </Tabs>
 
                 <AnimatePresence>
-                  {canDownload && !isDownloading && !downloadComplete && (
+                  {canStartDownload && (
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -1190,7 +1251,8 @@ function HomePage() {
                         size="lg"
                       >
                         <DownloadSimple className="mr-2" weight="bold" size={20} />
-                        Download {selectedFormat?.toUpperCase()}
+                        {downloadComplete ? 'Download Again' : 'Download'}{' '}
+                        {selectedFormat?.toUpperCase()}
                         {isVideoFormat && selectedQuality && ` (${selectedQuality})`}
                         {isAudioFormat && selectedBitrate && ` (${selectedBitrate})`}
                       </Button>
