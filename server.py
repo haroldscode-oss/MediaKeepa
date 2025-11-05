@@ -100,6 +100,13 @@ YOUTUBE_COOKIE_DOMAINS = (
     "youtube-nocookie.com",
 )
 
+YOUTUBE_PLAYER_CLIENTS = [
+    "tv",            # First choice: works without cookies, broad support
+    "android_vr",    # Backup client that currently bypasses most checks
+    "web_embedded",  # Only embeddable videos, but still useful fallback
+    "web_safari",    # Last resort without PO token
+]
+
 
 def resolve_youtube_cookies():
     """Resolve a usable cookies file for yt-dlp YouTube requests."""
@@ -181,6 +188,46 @@ def inject_youtube_cookies(command, url=None):
 
     command.extend(cookies_args)
     return command
+
+
+def build_yt_dlp_command(base_args, url, client=None):
+    """Create a yt-dlp command with optional YouTube player client."""
+    command = list(base_args)
+    if client and is_youtube_url(url):
+        command += ["--extractor-args", f"youtube:player_client={client}"]
+    command.append(url)
+    return inject_youtube_cookies(command, url)
+
+
+def run_yt_dlp_with_clients(base_args, url, preferred_clients=None, log_prefix="yt-dlp", **kwargs):
+    """Try yt-dlp with multiple player clients, returning (result, client_used)."""
+    clients = [None]
+    if is_youtube_url(url):
+        clients = preferred_clients or YOUTUBE_PLAYER_CLIENTS
+
+    last_result = None
+    last_client = None
+
+    for client in clients:
+        command = build_yt_dlp_command(base_args, url, client)
+        client_label = client or "default"
+        print(f"▶️ {log_prefix}: trying client '{client_label}' for {url[:50]}...")
+
+        result = subprocess.run(command, **kwargs)
+        last_result = result
+        last_client = client
+
+        if result.returncode == 0 and (not kwargs.get("capture_output") or result.stdout):
+            print(f"✅ {log_prefix}: client '{client_label}' succeeded")
+            return result, client
+
+        stderr_text = (result.stderr or "").strip()
+        if stderr_text:
+            print(f"⚠️ {log_prefix}: client '{client_label}' failed: {stderr_text}")
+        else:
+            print(f"⚠️ {log_prefix}: client '{client_label}' exited with code {result.returncode}")
+
+    raise RuntimeError(f"yt-dlp failed for all clients ({', '.join((c or 'default') for c in clients)})")
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
@@ -302,10 +349,11 @@ def resolve_media_title(url, cache_entry=None):
             return title
     
     try:
-        command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist", url]
-        command = inject_youtube_cookies(command, url)
-        result = subprocess.run(
-            command,
+        base_command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist"]
+        result, used_client = run_yt_dlp_with_clients(
+            base_command,
+            url,
+            log_prefix="metadata fetch",
             capture_output=True,
             text=True,
             timeout=20,
@@ -313,6 +361,8 @@ def resolve_media_title(url, cache_entry=None):
             errors="replace"
         )
         if result.returncode == 0 and result.stdout:
+            if used_client:
+                print(f"🎬 Metadata fetched via YouTube client '{used_client}'")
             metadata = json.loads(result.stdout)
             return metadata.get("title")
     except Exception as e:
@@ -1018,7 +1068,7 @@ def download():
 
         # Apply YouTube-specific extractor args to reduce 403 issues without PO tokens
         if is_youtube_url:
-            command += ["--extractor-args", "youtube:player_client=web_safari"]
+            command += ["--extractor-args", "youtube:player_client=tv"]
 
         # Start download in background thread
         # Offload TikTok thumbnail downloads to the background queue; thumbnails from other
@@ -1139,17 +1189,15 @@ def video_info():
     try:
         # Use yt-dlp to get video info in JSON format (FAST - no download)
         # For YouTube, use tv client which doesn't require authentication
-        command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist"]
-        if "youtube.com" in url or "youtu.be" in url:
-            command += ["--extractor-args", "youtube:player_client=tv"]
-        command.append(url)
-        command = inject_youtube_cookies(command, url)
-        
+        base_command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist"]
+
         print(f"\n=== FETCHING VIDEO INFO ===")
         print(f"URL: {url}")
-        
-        result = subprocess.run(
-            command,
+
+        result, used_client = run_yt_dlp_with_clients(
+            base_command,
+            url,
+            log_prefix="video info",
             capture_output=True,
             text=True,
             timeout=20  # Increased timeout for YouTube
@@ -1161,6 +1209,8 @@ def video_info():
                 "status": "error",
                 "message": "Failed to fetch media info"
             }), 500
+        if used_client:
+            print(f"🎯 Using YouTube client: {used_client}")
         
         # Parse JSON output
         import json
@@ -1501,14 +1551,15 @@ def get_video_url():
     
     try:
         # Use yt-dlp to get the best video URL (medium quality for preview)
-        command = [YTDLP_CMD, "--get-url", "-f", "best[height<=720]/best", url]
-        command = inject_youtube_cookies(command, url)
+        base_command = [YTDLP_CMD, "--get-url", "-f", "best[height<=720]/best"]
         
         print(f"\n=== FETCHING VIDEO STREAM URL ===")
         print(f"URL: {url}")
         
-        result = subprocess.run(
-            command,
+        result, used_client = run_yt_dlp_with_clients(
+            base_command,
+            url,
+            log_prefix="video stream",
             capture_output=True,
             text=True,
             timeout=10
@@ -1520,6 +1571,8 @@ def get_video_url():
                 "status": "error",
                 "message": "Failed to get video stream URL"
             }), 500
+        if used_client:
+            print(f"🎯 Stream fetched via YouTube client: {used_client}")
         
         video_url = result.stdout.strip()
         
