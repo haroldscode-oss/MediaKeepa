@@ -1138,10 +1138,10 @@ def video_info():
     
     try:
         # Use yt-dlp to get video info in JSON format (FAST - no download)
-        # For YouTube, use tv_embedded client which bypasses bot detection without cookies
+        # For YouTube, use android client which works without authentication
         command = [YTDLP_CMD, "--dump-json", "--no-download", "--no-playlist"]
         if "youtube.com" in url or "youtu.be" in url:
-            command += ["--extractor-args", "youtube:player_client=tv_embedded"]
+            command += ["--extractor-args", "youtube:player_client=android"]
         command.append(url)
         command = inject_youtube_cookies(command, url)
         
