@@ -28,6 +28,10 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     proxy: {
+      '/audio-separator': {
+        target: devApiTarget,
+        changeOrigin: true
+      },
       '/video-info': {
         target: devApiTarget,
         changeOrigin: true

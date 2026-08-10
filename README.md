@@ -2,6 +2,10 @@
 
 A powerful media downloader supporting video, audio, and image downloads from various platforms.
 
+MediaKeepa also includes an AI Audio Separator that splits uploaded songs into vocals, drums, bass, and music stems using `python-audio-separator` and the Demucs `htdemucs.yaml` model.
+
+The first separation downloads the model into `audio_separator_models/`. You can override the model cache or model name with `AUDIO_SEPARATOR_MODEL_DIR` and `AUDIO_SEPARATOR_MODEL`.
+
 ## 🚀 Quick Start
 
 ### Start MediaKeepa

@@ -4,3 +4,4 @@ Flask-Limiter==4.0.0
 requests==2.32.5
 yt-dlp==2026.8.4.234419.dev0
 gunicorn==23.0.0
+audio-separator[cpu]==0.44.5

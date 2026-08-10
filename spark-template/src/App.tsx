@@ -8,12 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card } from "@/components/ui/card"
 import { ShimmerText } from "@/components/ShimmerText"
 import { FormatOption } from "@/components/FormatOption"
-import { ThemeToggle } from "@/components/ThemeToggle"
-import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
+import { AppHeader } from "@/components/AppHeader"
 import { WebsiteIcon } from "@/components/WebsiteIcon"
 import { RecentUrls, addRecentUrl } from "@/components/RecentUrls"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
+import { AudioSeparatorPage } from "@/pages/AudioSeparatorPage"
 import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
@@ -126,7 +126,7 @@ type DownloadProgress = {
   timeRemainingSeconds: number
 }
 
-function HomePage() {
+function DownloaderPage() {
   const [url, setUrl] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
@@ -947,10 +947,7 @@ function HomePage() {
 
   return (
     <div className="w-full max-w-2xl mx-auto space-y-6 sm:space-y-8">
-      <div className="flex items-center justify-between">
-        <MediaKeepaLogo />
-        <ThemeToggle />
-      </div>
+      <AppHeader />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1379,7 +1376,9 @@ function App() {
       <div className="min-h-screen bg-background flex flex-col">
         <div className="flex-1 px-4 py-6 sm:p-8">
           <Routes>
-            <Route path="/" element={<HomePage />} />
+            <Route path="/" element={<DownloaderPage />} />
+            <Route path="/downloader" element={<DownloaderPage />} />
+            <Route path="/audio-separator" element={<AudioSeparatorPage />} />
             <Route path="/legal/:page" element={<LegalPage />} />
           </Routes>
         </div>

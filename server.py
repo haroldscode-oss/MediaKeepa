@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify, send_from_directory, send_file, Respo
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.utils import secure_filename
 import subprocess
 import os
 import sys
 import glob
+import zipfile
 import socket
 import uuid
 import re
@@ -518,6 +520,134 @@ temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
 if not os.path.exists(temp_downloads_path):
     os.makedirs(temp_downloads_path)
 
+# Audio Separator configuration. The model is loaded lazily so ordinary downloader
+# requests stay fast and the first separator request owns the one-time model load.
+AUDIO_SEPARATOR_MAX_BYTES = 50 * 1024 * 1024
+AUDIO_SEPARATOR_ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "aac", "ogg"}
+AUDIO_SEPARATOR_MODEL = os.environ.get("AUDIO_SEPARATOR_MODEL", "htdemucs.yaml")
+AUDIO_SEPARATOR_MODEL_DIR = Path(
+    os.environ.get("AUDIO_SEPARATOR_MODEL_DIR", ROOT_DIR / "audio_separator_models")
+)
+AUDIO_SEPARATOR_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+audio_separator_jobs = {}
+audio_separator_jobs_lock = threading.Lock()
+audio_separator_executor = ThreadPoolExecutor(max_workers=1)
+audio_separator_instance = None
+audio_separator_instance_lock = threading.Lock()
+atexit.register(lambda: audio_separator_executor.shutdown(wait=False))
+
+
+def update_audio_separator_job(job_id, **changes):
+    with audio_separator_jobs_lock:
+        job = audio_separator_jobs.get(job_id)
+        if job is not None:
+            job.update(changes)
+
+
+def get_audio_separator_instance():
+    """Create and cache the local Demucs separator on first use."""
+    global audio_separator_instance
+
+    with audio_separator_instance_lock:
+        if audio_separator_instance is None:
+            from audio_separator.separator import Separator
+
+            separator = Separator(
+                model_file_dir=str(AUDIO_SEPARATOR_MODEL_DIR),
+                output_dir=temp_downloads_path,
+                output_format="WAV",
+            )
+            separator.load_model(AUDIO_SEPARATOR_MODEL)
+            audio_separator_instance = separator
+
+    return audio_separator_instance
+
+
+def run_audio_separation(job_id, input_path):
+    stem_specs = (
+        ("vocals", "Vocals"),
+        ("drums", "Drums"),
+        ("bass", "Bass"),
+        ("music", "Other"),
+    )
+
+    try:
+        update_audio_separator_job(
+            job_id,
+            status="loading_model",
+            progress=15,
+            message="Loading the separation model...",
+        )
+        separator = get_audio_separator_instance()
+        update_audio_separator_job(
+            job_id,
+            status="processing",
+            progress=45,
+            message="Separating vocals, drums, bass, and music...",
+        )
+
+        custom_names = {
+            model_stem: f"{job_id}_{stem_name}"
+            for stem_name, model_stem in stem_specs
+        }
+        output_files = separator.separate(input_path, custom_output_names=custom_names)
+        output_names = {os.path.basename(path) for path in output_files}
+
+        stems = []
+        allowed_files = set()
+        for stem_name, _model_stem in stem_specs:
+            expected_prefix = f"{job_id}_{stem_name}."
+            filename = next(
+                (name for name in output_names if name.lower().startswith(expected_prefix.lower())),
+                None,
+            )
+            if not filename:
+                raise RuntimeError(f"The separator did not produce the {stem_name} stem.")
+
+            allowed_files.add(filename)
+            stems.append({
+                "name": stem_name,
+                "label": "Music" if stem_name == "music" else stem_name.title(),
+                "url": f"/audio-separator/file/{job_id}/{filename}",
+                "download_url": f"/audio-separator/file/{job_id}/{filename}?download=1",
+            })
+
+        archive_name = f"{job_id}_stems.zip"
+        archive_path = os.path.join(temp_downloads_path, archive_name)
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for stem in stems:
+                filename = stem["url"].rsplit("/", 1)[-1]
+                archive.write(
+                    os.path.join(temp_downloads_path, filename),
+                    arcname=f"MediaKeepa_{stem['label']}.wav",
+                )
+
+        allowed_files.add(archive_name)
+        update_audio_separator_job(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Your audio stems are ready.",
+            stems=stems,
+            archive_url=f"/audio-separator/file/{job_id}/{archive_name}?download=1",
+            allowed_files=allowed_files,
+        )
+    except Exception as exc:
+        print(f"Audio separator job {job_id} failed: {exc}")
+        update_audio_separator_job(
+            job_id,
+            status="error",
+            progress=0,
+            message=str(exc),
+        )
+    finally:
+        try:
+            if os.path.isfile(input_path):
+                os.remove(input_path)
+        except OSError as exc:
+            print(f"Could not clean audio separator upload {input_path}: {exc}")
+
 # Clean up any leftover files from previous runs on startup (always run this)
 try:
     if os.path.exists(temp_downloads_path):
@@ -950,6 +1080,77 @@ def serve_service_worker():
 @app.route("/ping")
 def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
+
+
+@app.route("/audio-separator", methods=["POST"])
+@limiter.limit("10 per hour")
+def start_audio_separator():
+    if request.content_length and request.content_length > AUDIO_SEPARATOR_MAX_BYTES:
+        return jsonify({"status": "error", "message": "Audio files must be 50 MB or smaller."}), 413
+
+    upload = request.files.get("audio")
+    if upload is None or not upload.filename:
+        return jsonify({"status": "error", "message": "Choose an audio file to separate."}), 400
+
+    safe_name = secure_filename(upload.filename)
+    extension = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    if extension not in AUDIO_SEPARATOR_ALLOWED_EXTENSIONS:
+        return jsonify({
+            "status": "error",
+            "message": "Use an MP3, WAV, FLAC, M4A, AAC, or OGG audio file.",
+        }), 400
+
+    job_id = uuid.uuid4().hex
+    input_path = os.path.join(temp_downloads_path, f"{job_id}_input.{extension}")
+    upload.save(input_path)
+
+    if os.path.getsize(input_path) > AUDIO_SEPARATOR_MAX_BYTES:
+        os.remove(input_path)
+        return jsonify({"status": "error", "message": "Audio files must be 50 MB or smaller."}), 413
+
+    with audio_separator_jobs_lock:
+        audio_separator_jobs[job_id] = {
+            "status": "queued",
+            "progress": 5,
+            "message": "Your audio is queued for separation.",
+            "created_at": time.time(),
+            "allowed_files": set(),
+        }
+
+    audio_separator_executor.submit(run_audio_separation, job_id, input_path)
+    return jsonify({"status": "queued", "job_id": job_id}), 202
+
+
+@app.route("/audio-separator/status/<job_id>")
+def audio_separator_status(job_id):
+    with audio_separator_jobs_lock:
+        job = audio_separator_jobs.get(job_id)
+        if job is None:
+            return jsonify({"status": "error", "message": "Separation job not found."}), 404
+        public_job = {
+            key: value
+            for key, value in job.items()
+            if key not in {"allowed_files", "created_at"}
+        }
+
+    return jsonify(public_job)
+
+
+@app.route("/audio-separator/file/<job_id>/<filename>")
+def audio_separator_file(job_id, filename):
+    with audio_separator_jobs_lock:
+        job = audio_separator_jobs.get(job_id)
+        allowed_files = set(job.get("allowed_files", set())) if job else set()
+
+    if filename not in allowed_files:
+        return jsonify({"status": "error", "message": "Audio stem not found."}), 404
+
+    return send_from_directory(
+        temp_downloads_path,
+        filename,
+        as_attachment=request.args.get("download") == "1",
+        conditional=True,
+    )
 
 @app.route("/download", methods=["POST"])
 @limiter.limit("50 per minute")  # 50 downloads/min = plenty for real users, blocks bots
