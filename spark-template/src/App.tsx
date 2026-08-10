@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card } from "@/components/ui/card"
-import { Progress } from "@/components/ui/progress"
 import { ShimmerText } from "@/components/ShimmerText"
 import { FormatOption } from "@/components/FormatOption"
 import { ThemeToggle } from "@/components/ThemeToggle"
@@ -138,7 +137,6 @@ function HomePage() {
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null)
   const [downloadComplete, setDownloadComplete] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
   const [availableTabs, setAvailableTabs] = useState({
     video: true,
     audio: true,
@@ -167,15 +165,6 @@ function HomePage() {
   const completedSessionRef = useRef<string | null>(null)
   const downloadInFlightRef = useRef(false) // stops duplicate download firing
 
-  const formatTimeRemaining = (seconds: number) => {
-    if (!seconds || seconds < 1) {
-      return "Calculating..."
-    }
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = Math.max(seconds % 60, 0)
-    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
-  }
-
   const formatElapsedTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000)
     const milliseconds = Math.floor((ms % 1000) / 10)
@@ -188,7 +177,7 @@ function HomePage() {
         fetchVideoInfo(url)
       }, 800)
       return () => clearTimeout(timer)
-    } else if (url.length === 0 && videoInfo) {
+    } else if (url.length === 0) {
       setVideoInfo(null)
       setSelectedFormat(null)
       setSelectedQuality(null)
@@ -360,7 +349,7 @@ function HomePage() {
     }
   }
 
-  const handleTabChange = (value: string) => {
+  const handleTabChange = () => {
     // Reset download state when switching tabs
     setDownloadComplete(false)
     setDownloadProgress(null)
@@ -444,7 +433,6 @@ function HomePage() {
       }
 
       const newSessionId = data.session_id
-      setSessionId(newSessionId)
       completedSessionRef.current = null
       
       console.log('Download started, session ID:', newSessionId)
@@ -891,7 +879,6 @@ function HomePage() {
 
       if (data.status === 'started' && data.session_id) {
         const newSessionId = data.session_id
-        setSessionId(newSessionId)
         completedSessionRef.current = null
         pollDownloadProgress(newSessionId)
       } else {
@@ -916,25 +903,6 @@ function HomePage() {
       }
     }
   }
-
-  const selectedLanguageName = selectedLanguage
-    ? availableLanguages.find((lang) => lang.code === selectedLanguage)?.name
-    : undefined
-
-  const downloadLabel = (() => {
-    switch (activeDownloadType) {
-      case 'video':
-        return `${selectedFormat?.toUpperCase() ?? 'VIDEO'}${selectedQuality ? ` • ${selectedQuality}` : ''}`
-      case 'audio':
-        return `${selectedFormat?.toUpperCase() ?? 'AUDIO'}${selectedBitrate ? ` • ${selectedBitrate}` : ''}`
-      case 'image':
-        return `${selectedFormat?.toUpperCase() ?? 'IMAGE'} download`
-      case 'caption':
-        return `${selectedCaptionFormat?.toUpperCase() ?? 'Caption'}${selectedLanguageName ? ` • ${selectedLanguageName}` : ''}`
-      default:
-        return 'Preparing download'
-    }
-  })()
 
   const progressPercentage = downloadProgress?.percentage ?? 0
   const progressDisplay = Number.isFinite(progressPercentage) ? Math.round(progressPercentage) : 0

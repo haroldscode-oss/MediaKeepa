@@ -1,6 +1,7 @@
 type LegalSection = {
   heading?: string
   content: string[]
+  contentAfter?: string[]
   list?: string[]
 }
 
@@ -157,7 +158,7 @@ export const legalContent: LegalContent = {
           "No warranty that the service will meet your requirements or expectations",
           "No warranty of merchantability, fitness for a particular purpose, or non-infringement",
         ],
-        content: [
+        contentAfter: [
           "YOU USE MEDIAKEEPA AT YOUR OWN RISK. We make no representations or warranties about the legality of downloading any specific content. Legal compliance is YOUR responsibility.",
         ],
       },
@@ -175,7 +176,7 @@ export const legalContent: LegalContent = {
           "Any legal fees, court costs, settlements, or judgments arising from your illegal use of downloaded content",
           "Any claims by third parties related to your downloads or use of content",
         ],
-        content: [
+        contentAfter: [
           "IN NO EVENT SHALL MEDIAKEEPA'S TOTAL LIABILITY EXCEED $10 (TEN US DOLLARS). This limitation applies regardless of the legal theory (contract, tort, negligence, strict liability, or otherwise).",
         ],
       },
@@ -193,7 +194,7 @@ export const legalContent: LegalContent = {
           "Arising from any content you download, including copyright infringement claims",
           "Arising from DMCA notices, cease and desist letters, or legal action related to your downloads",
         ],
-        content: [
+        contentAfter: [
           "This indemnification obligation survives termination of your use of the service and continues indefinitely.",
         ],
       },

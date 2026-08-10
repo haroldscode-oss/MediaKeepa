@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { Dialog, DialogContent, DialogClose } from "@/components/ui/dialog"
 import { X } from "@phosphor-icons/react"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -129,6 +129,22 @@ export function LegalModal({ isOpen, onClose, page }: LegalModalProps) {
                       ))}
                     </motion.ul>
                   )}
+                  {section.contentAfter?.map((paragraph, pIndex) => (
+                    <motion.p
+                      key={`after-${pIndex}`}
+                      variants={{
+                        hidden: { opacity: 0, y: 10 },
+                        visible: {
+                          opacity: 1,
+                          y: 0,
+                          transition: { duration: 0.4, ease: "easeOut" },
+                        },
+                      }}
+                      className="text-foreground/90 leading-relaxed"
+                    >
+                      {paragraph}
+                    </motion.p>
+                  ))}
                 </motion.div>
               ))}
 

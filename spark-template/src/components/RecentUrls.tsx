@@ -162,33 +162,38 @@ export function RecentUrls({ onUrlSelect }: RecentUrlsProps) {
         <div className="space-y-2">
           <AnimatePresence mode="popLayout">
             {entries.map((entry) => (
-              <motion.button
+              <motion.div
                 key={entry.url}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                onClick={() => onUrlSelect(entry.url)}
-                className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-muted/60 transition-colors text-left group"
+                className="relative w-full rounded-md hover:bg-muted/60 transition-colors group"
               >
-                <WebsiteIcon
-                  url={entry.url}
-                  className="w-5 h-5 text-muted-foreground flex-shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{entry.title}</p>
-                  <p className="text-xs text-muted-foreground truncate">{formatHost(entry.url)}</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => onUrlSelect(entry.url)}
+                  className="w-full flex items-center gap-3 p-2 pr-10 text-left"
+                >
+                  <WebsiteIcon
+                    url={entry.url}
+                    className="w-5 h-5 text-muted-foreground flex-shrink-0"
+                  />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium truncate">{entry.title}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{formatHost(entry.url)}</span>
+                  </span>
+                </button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                   onClick={(event) => removeUrl(entry.url, event)}
                   aria-label="Remove URL"
                 >
                   <X size={14} />
                 </Button>
-              </motion.button>
+              </motion.div>
             ))}
           </AnimatePresence>
         </div>

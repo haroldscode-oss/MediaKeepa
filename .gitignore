@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 
 # Temporary downloads
 temp_downloads/

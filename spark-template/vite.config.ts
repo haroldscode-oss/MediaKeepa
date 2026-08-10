@@ -16,7 +16,7 @@ export default defineConfig({
     tailwindcss(),
     // DO NOT REMOVE
     createIconImportProxy() as PluginOption,
-    sparkPlugin() as PluginOption,
+    sparkPlugin({ port: 3000 }) as PluginOption,
   ],
   resolve: {
     alias: {
@@ -25,7 +25,7 @@ export default defineConfig({
   },
   server: {
     host: true,
-    port: 5000,
+    port: 3000,
     strictPort: true,
     proxy: {
       '/video-info': {

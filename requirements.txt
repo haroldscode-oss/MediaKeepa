@@ -2,5 +2,5 @@
 flask-cors==6.0.1
 Flask-Limiter==4.0.0
 requests==2.32.5
-yt-dlp==2025.10.22
+yt-dlp==2026.8.4.234419.dev0
 gunicorn==23.0.0

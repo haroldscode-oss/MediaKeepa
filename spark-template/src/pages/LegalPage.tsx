@@ -113,6 +113,14 @@ export function LegalPage() {
                   ))}
                 </ul>
               )}
+              {section.contentAfter?.map((paragraph, pIndex) => (
+                <p
+                  key={`after-${pIndex}`}
+                  className="text-sm sm:text-base text-foreground/90 leading-relaxed"
+                >
+                  {paragraph}
+                </p>
+              ))}
             </motion.div>
           ))}
 

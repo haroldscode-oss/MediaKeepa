@@ -4,6 +4,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import subprocess
 import os
+import sys
 import glob
 import socket
 import uuid
@@ -21,13 +22,18 @@ import atexit
 import base64
 from urllib.parse import urlparse
 
+# Keep status logging reliable on Windows hosts whose console defaults to cp1252.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
 DEFAULT_PORT = int(os.environ.get("PORT", "8080"))
 
 # Detect yt-dlp command based on platform
 import platform
-YTDLP_CMD = YTDLP_CMD if platform.system() == "Windows" else "yt-dlp"
+YTDLP_CMD = str(ROOT_DIR / "yt-dlp.exe") if platform.system() == "Windows" else "yt-dlp"
 
 if not DIST_FOLDER.exists():
     print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
@@ -45,6 +51,8 @@ def detect_lan_ip():
 
 
 default_origins = {
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:5000",
     "http://127.0.0.1:5000",
     "http://localhost:8080",
@@ -59,6 +67,7 @@ lan_ip_override = os.environ.get("DEV_HOST_IP")
 lan_ip = lan_ip_override or detect_lan_ip()
 if lan_ip:
     default_origins.update({
+        f"http://{lan_ip}:3000",
         f"http://{lan_ip}:5000",
         f"http://{lan_ip}:{DEFAULT_PORT}",
         f"http://{lan_ip}:5173",
