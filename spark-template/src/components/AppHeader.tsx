@@ -5,7 +5,7 @@ import { ThemeToggle } from "@/components/ThemeToggle"
 import { cn } from "@/lib/utils"
 
 const navItems = [
-  { to: "/downloader", label: "Downloader", icon: DownloadSimple },
+  { to: "/downloader", label: "Media Downloader", icon: DownloadSimple },
   { to: "/audio-separator", label: "Audio Separator", icon: Waveform },
 ]
 
@@ -34,7 +34,7 @@ export function AppHeader() {
               aria-label={label}
             >
               <Icon size={16} weight="bold" />
-              <span className="hidden lg:inline">{label}</span>
+              <span className="hidden sm:inline">{label}</span>
             </NavLink>
           ))}
         </nav>

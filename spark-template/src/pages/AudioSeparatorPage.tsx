@@ -219,26 +219,13 @@ export function AudioSeparatorPage() {
   const progress = status?.progress ?? 0
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
+    <div className="mx-auto w-full max-w-5xl space-y-5">
       <AppHeader />
 
-      <main className="space-y-8 pb-8">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="space-y-2 text-center"
-        >
-          <p className="text-xs font-semibold tracking-[0.2em] text-muted-foreground">AI STEM SEPARATOR</p>
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Audio Separator</h1>
-          <p className="mx-auto max-w-2xl text-muted-foreground">
-            Separate a song into vocals, drums, bass, and music. Your files are removed automatically after processing.
-          </p>
-        </motion.div>
-
+      <main className="pb-8">
         {!selectedFile ? (
           <Card
-            className={`cursor-pointer gap-5 border-2 border-dashed p-8 text-center transition-colors sm:p-12 ${isDragging ? "border-foreground bg-muted/60" : "hover:border-muted-foreground"}`}
+            className={`cursor-pointer gap-4 border-2 border-dashed p-8 text-center transition-colors sm:p-10 ${isDragging ? "border-foreground bg-muted/60" : "hover:border-muted-foreground"}`}
             onClick={() => fileInputRef.current?.click()}
             onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }}
             onDragOver={(event) => event.preventDefault()}
@@ -305,7 +292,7 @@ export function AudioSeparatorPage() {
                   </motion.div>
                 ) : stems.length === 0 ? (
                   <motion.div key="ready" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                    <Button onClick={startSeparation} size="lg" className="h-12 w-full">Separate Audio Stems</Button>
+                    <Button onClick={startSeparation} size="lg" className="h-12 w-full bg-black text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-white">Separate Audio</Button>
                   </motion.div>
                 ) : (
                   <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm font-medium">
@@ -371,7 +358,7 @@ export function AudioSeparatorPage() {
                         {allPlaying ? "Pause all" : "Play all"}
                       </Button>
                       {archiveUrl && (
-                        <Button asChild className="gap-2">
+                        <Button asChild className="gap-2 bg-black text-white hover:bg-black dark:bg-black dark:text-white dark:hover:bg-black">
                           <a href={archiveUrl} download>
                             <DownloadSimple size={18} weight="bold" />
                             Download all stems
