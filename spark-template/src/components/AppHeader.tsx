@@ -1,4 +1,4 @@
-import { NavLink, Link, useLocation } from "react-router-dom"
+import { NavLink, useLocation } from "react-router-dom"
 import { DownloadSimple, Waveform } from "@phosphor-icons/react"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { ThemeToggle } from "@/components/ThemeToggle"
@@ -14,9 +14,9 @@ export function AppHeader() {
 
   return (
     <header className="flex items-center justify-between gap-3">
-      <Link to="/" aria-label="MediaKeepa home" className="min-w-0">
+      <div className="min-w-0">
         <MediaKeepaLogo />
-      </Link>
+      </div>
 
       <div className="flex items-center gap-2">
         <nav className="flex items-center gap-1 rounded-full border border-border bg-card p-1 shadow-sm" aria-label="MediaKeepa tools">

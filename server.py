@@ -7,6 +7,7 @@ import subprocess
 import os
 import sys
 import glob
+import io
 import zipfile
 import socket
 import uuid
@@ -40,7 +41,10 @@ YTDLP_CMD = str(ROOT_DIR / "yt-dlp.exe") if platform.system() == "Windows" else 
 if not DIST_FOLDER.exists():
     print("⚠️  Frontend build not found at spark-template/dist. Run 'npm run build' inside spark-template.")
 
-app = Flask(__name__, static_folder=str(DIST_FOLDER), static_url_path="")
+# Static assets and SPA routes are served explicitly by serve_index below. A
+# root-level automatic Flask static route would otherwise swallow client-side
+# routes such as /audio-separator and return Werkzeug's HTML 404 page.
+app = Flask(__name__, static_folder=None)
 
 # CORS Configuration - defaults cover localhost and common LAN dev setups.
 def detect_lan_ip():
@@ -91,6 +95,22 @@ limiter = Limiter(
     default_limits=["1000 per day", "200 per hour"],  # Realistic: normal users won't hit this, bots will
     storage_uri="memory://"
 )
+
+
+@app.errorhandler(429)
+def handle_rate_limit(_error):
+    return jsonify({
+        "status": "error",
+        "message": "Too many requests. Please wait a moment and try again.",
+    }), 429
+
+
+@app.errorhandler(413)
+def handle_upload_too_large(_error):
+    return jsonify({
+        "status": "error",
+        "message": "Audio files must be 50 MB or smaller.",
+    }), 413
 
 # In-memory cache for video metadata (prevents repeated yt-dlp calls)
 video_cache = {}
@@ -524,7 +544,18 @@ if not os.path.exists(temp_downloads_path):
 # requests stay fast and the first separator request owns the one-time model load.
 AUDIO_SEPARATOR_MAX_BYTES = 50 * 1024 * 1024
 AUDIO_SEPARATOR_ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "aac", "ogg"}
-AUDIO_SEPARATOR_MODEL = os.environ.get("AUDIO_SEPARATOR_MODEL", "htdemucs.yaml")
+AUDIO_SEPARATOR_MODEL = os.environ.get("AUDIO_SEPARATOR_MODEL", "htdemucs_ft.yaml")
+AUDIO_SEPARATOR_DEMUCS_SHIFTS = int(os.environ.get("AUDIO_SEPARATOR_DEMUCS_SHIFTS", "4"))
+AUDIO_SEPARATOR_DEMUCS_OVERLAP = float(os.environ.get("AUDIO_SEPARATOR_DEMUCS_OVERLAP", "0.5"))
+AUDIO_SEPARATOR_BACKEND = os.environ.get("AUDIO_SEPARATOR_BACKEND", "auto").strip().lower()
+AUDIO_SEPARATOR_MODAL_APP = os.environ.get(
+    "AUDIO_SEPARATOR_MODAL_APP",
+    "mediakeepa-audio-separator",
+)
+AUDIO_SEPARATOR_MODAL_FUNCTION = os.environ.get(
+    "AUDIO_SEPARATOR_MODAL_FUNCTION",
+    "separate_audio",
+)
 AUDIO_SEPARATOR_MODEL_DIR = Path(
     os.environ.get("AUDIO_SEPARATOR_MODEL_DIR", ROOT_DIR / "audio_separator_models")
 )
@@ -557,6 +588,12 @@ def get_audio_separator_instance():
                 model_file_dir=str(AUDIO_SEPARATOR_MODEL_DIR),
                 output_dir=temp_downloads_path,
                 output_format="WAV",
+                demucs_params={
+                    "segment_size": "Default",
+                    "shifts": AUDIO_SEPARATOR_DEMUCS_SHIFTS,
+                    "overlap": AUDIO_SEPARATOR_DEMUCS_OVERLAP,
+                    "segments_enabled": True,
+                },
             )
             separator.load_model(AUDIO_SEPARATOR_MODEL)
             audio_separator_instance = separator
@@ -564,75 +601,164 @@ def get_audio_separator_instance():
     return audio_separator_instance
 
 
-def run_audio_separation(job_id, input_path):
-    stem_specs = (
-        ("vocals", "Vocals"),
-        ("drums", "Drums"),
-        ("bass", "Bass"),
-        ("music", "Other"),
+LOCAL_STEM_SPECS = (
+    ("vocals", "Vocals", "Vocals"),
+    ("drums", "Drums", "Drums"),
+    ("bass", "Bass", "Bass"),
+    ("music", "Other", "Music"),
+)
+
+MODAL_STEM_SPECS = (
+    ("vocals", "Vocals"),
+    ("instrumental", "Instrumental"),
+    ("drums", "Drums"),
+    ("bass", "Bass"),
+    ("music", "Music"),
+)
+
+
+@lru_cache(maxsize=1)
+def get_modal_audio_separator_function():
+    import modal
+
+    return modal.Function.from_name(
+        AUDIO_SEPARATOR_MODAL_APP,
+        AUDIO_SEPARATOR_MODAL_FUNCTION,
     )
 
-    try:
-        update_audio_separator_job(
-            job_id,
-            status="loading_model",
-            progress=15,
-            message="Loading the separation model...",
-        )
-        separator = get_audio_separator_instance()
-        update_audio_separator_job(
-            job_id,
-            status="processing",
-            progress=45,
-            message="Separating vocals, drums, bass, and music...",
-        )
 
-        custom_names = {
-            model_stem: f"{job_id}_{stem_name}"
-            for stem_name, model_stem in stem_specs
-        }
-        output_files = separator.separate(input_path, custom_output_names=custom_names)
-        output_names = {os.path.basename(path) for path in output_files}
+def run_modal_audio_separation(job_id, input_path):
+    extension = Path(input_path).suffix.lstrip(".").lower()
+    with open(input_path, "rb") as audio_file:
+        audio_bytes = audio_file.read()
 
-        stems = []
-        allowed_files = set()
-        for stem_name, _model_stem in stem_specs:
-            expected_prefix = f"{job_id}_{stem_name}."
-            filename = next(
-                (name for name in output_names if name.lower().startswith(expected_prefix.lower())),
-                None,
+    remote_function = get_modal_audio_separator_function()
+    archive_bytes = remote_function.remote(audio_bytes, extension)
+    if not isinstance(archive_bytes, bytes) or not archive_bytes:
+        raise RuntimeError("Modal returned an empty separation result.")
+
+    stem_files = {}
+    with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
+        archive_names = set(archive.namelist())
+        for stem_name, _label in MODAL_STEM_SPECS:
+            archive_name = f"{stem_name}.wav"
+            if archive_name not in archive_names:
+                raise RuntimeError(f"Modal did not produce the {stem_name} stem.")
+
+            filename = f"{job_id}_{stem_name}.wav"
+            output_path = os.path.join(temp_downloads_path, filename)
+            with archive.open(archive_name) as source, open(output_path, "wb") as destination:
+                destination.write(source.read())
+            stem_files[stem_name] = filename
+
+    return stem_files
+
+
+def run_local_audio_separation(job_id, input_path):
+    separator = get_audio_separator_instance()
+    custom_names = {
+        model_stem: f"{job_id}_{stem_name}"
+        for stem_name, model_stem, _label in LOCAL_STEM_SPECS
+    }
+    output_files = separator.separate(input_path, custom_output_names=custom_names)
+    output_names = {os.path.basename(path) for path in output_files}
+
+    stem_files = {}
+    for stem_name, _model_stem, _label in LOCAL_STEM_SPECS:
+        expected_prefix = f"{job_id}_{stem_name}."
+        filename = next(
+            (name for name in output_names if name.lower().startswith(expected_prefix.lower())),
+            None,
+        )
+        if not filename:
+            raise RuntimeError(f"The separator did not produce the {stem_name} stem.")
+        stem_files[stem_name] = filename
+
+    return stem_files
+
+
+def complete_audio_separator_job(job_id, stem_files, processor):
+    label_lookup = {name: label for name, label in MODAL_STEM_SPECS}
+    labels = [name for name, _label in MODAL_STEM_SPECS if name in stem_files]
+
+    stems = []
+    allowed_files = set()
+    for stem_name in labels:
+        filename = stem_files[stem_name]
+        label = label_lookup[stem_name]
+        allowed_files.add(filename)
+        stems.append({
+            "name": stem_name,
+            "label": label,
+            "url": f"/api/audio-separator/file/{job_id}/{filename}",
+            "download_url": f"/api/audio-separator/file/{job_id}/{filename}?download=1",
+        })
+
+    archive_name = f"{job_id}_stems.zip"
+    archive_path = os.path.join(temp_downloads_path, archive_name)
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for stem in stems:
+            filename = stem["url"].rsplit("/", 1)[-1]
+            archive.write(
+                os.path.join(temp_downloads_path, filename),
+                arcname=f"MediaKeepa_{stem['label']}.wav",
             )
-            if not filename:
-                raise RuntimeError(f"The separator did not produce the {stem_name} stem.")
 
-            allowed_files.add(filename)
-            stems.append({
-                "name": stem_name,
-                "label": "Music" if stem_name == "music" else stem_name.title(),
-                "url": f"/audio-separator/file/{job_id}/{filename}",
-                "download_url": f"/audio-separator/file/{job_id}/{filename}?download=1",
-            })
+    allowed_files.add(archive_name)
+    update_audio_separator_job(
+        job_id,
+        status="completed",
+        progress=100,
+        message="Your quality-first audio stems are ready.",
+        stems=stems,
+        archive_url=f"/api/audio-separator/file/{job_id}/{archive_name}?download=1",
+        allowed_files=allowed_files,
+        processor=processor,
+    )
 
-        archive_name = f"{job_id}_stems.zip"
-        archive_path = os.path.join(temp_downloads_path, archive_name)
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for stem in stems:
-                filename = stem["url"].rsplit("/", 1)[-1]
-                archive.write(
-                    os.path.join(temp_downloads_path, filename),
-                    arcname=f"MediaKeepa_{stem['label']}.wav",
+
+def run_audio_separation(job_id, input_path):
+
+    try:
+        stem_files = None
+        processor = "local-demucs"
+        if AUDIO_SEPARATOR_BACKEND in {"auto", "modal"}:
+            update_audio_separator_job(
+                job_id,
+                status="loading_model",
+                progress=15,
+                message="Connecting to the quality GPU separator...",
+            )
+            try:
+                update_audio_separator_job(
+                    job_id,
+                    status="processing",
+                    progress=35,
+                    message="Running Demucs and BS-RoFormer on Modal GPU...",
+                )
+                stem_files = run_modal_audio_separation(job_id, input_path)
+                processor = "modal-l4-quality"
+            except Exception as modal_error:
+                if AUDIO_SEPARATOR_BACKEND == "modal":
+                    raise
+                print(f"Modal audio separation unavailable; using local fallback: {modal_error}")
+                update_audio_separator_job(
+                    job_id,
+                    status="loading_model",
+                    progress=20,
+                    message="GPU unavailable. Loading the local quality separator...",
                 )
 
-        allowed_files.add(archive_name)
-        update_audio_separator_job(
-            job_id,
-            status="completed",
-            progress=100,
-            message="Your audio stems are ready.",
-            stems=stems,
-            archive_url=f"/audio-separator/file/{job_id}/{archive_name}?download=1",
-            allowed_files=allowed_files,
-        )
+        if stem_files is None:
+            update_audio_separator_job(
+                job_id,
+                status="processing",
+                progress=45,
+                message="Running local quality-first Demucs separation...",
+            )
+            stem_files = run_local_audio_separation(job_id, input_path)
+
+        complete_audio_separator_job(job_id, stem_files, processor)
     except Exception as exc:
         print(f"Audio separator job {job_id} failed: {exc}")
         update_audio_separator_job(
@@ -1082,7 +1208,7 @@ def ping():
     return jsonify({"status": "ok", "message": "Server is running!"})
 
 
-@app.route("/audio-separator", methods=["POST"])
+@app.route("/api/audio-separator", methods=["POST"])
 @limiter.limit("10 per hour")
 def start_audio_separator():
     if request.content_length and request.content_length > AUDIO_SEPARATOR_MAX_BYTES:
@@ -1121,7 +1247,8 @@ def start_audio_separator():
     return jsonify({"status": "queued", "job_id": job_id}), 202
 
 
-@app.route("/audio-separator/status/<job_id>")
+@app.route("/api/audio-separator/status/<job_id>")
+@limiter.exempt
 def audio_separator_status(job_id):
     with audio_separator_jobs_lock:
         job = audio_separator_jobs.get(job_id)
@@ -1136,7 +1263,8 @@ def audio_separator_status(job_id):
     return jsonify(public_job)
 
 
-@app.route("/audio-separator/file/<job_id>/<filename>")
+@app.route("/api/audio-separator/file/<job_id>/<filename>")
+@limiter.exempt
 def audio_separator_file(job_id, filename):
     with audio_separator_jobs_lock:
         job = audio_separator_jobs.get(job_id)

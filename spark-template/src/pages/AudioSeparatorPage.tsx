@@ -37,6 +37,22 @@ type SeparatorStatus = {
   archive_url?: string
 }
 
+async function readApiResponse<T>(response: Response): Promise<T> {
+  const body = await response.text()
+
+  try {
+    return JSON.parse(body) as T
+  } catch {
+    if (response.status === 429) {
+      throw new Error("Too many requests. Please wait a moment and try again.")
+    }
+    if (response.status === 413) {
+      throw new Error("Audio files must be 50 MB or smaller.")
+    }
+    throw new Error(`The server returned an unexpected response${response.status ? ` (${response.status})` : ""}. Please try again.`)
+  }
+}
+
 function isAcceptedAudio(file: File) {
   const extension = file.name.split(".").pop()?.toLowerCase() || ""
   return file.type.startsWith("audio/") || ACCEPTED_EXTENSIONS.includes(extension)
@@ -82,9 +98,9 @@ export function AudioSeparatorPage() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`/audio-separator/status/${jobId}`)
-        const data = await response.json() as SeparatorStatus & { error?: string }
-        if (!response.ok) throw new Error(data.error || "Unable to read separation status")
+        const response = await fetch(`/api/audio-separator/status/${jobId}`)
+        const data = await readApiResponse<SeparatorStatus & { error?: string }>(response)
+        if (!response.ok) throw new Error(data.error || data.message || "Unable to read separation status")
         if (cancelled) return
 
         setStatus(data)
@@ -101,7 +117,7 @@ export function AudioSeparatorPage() {
           return
         }
 
-        timer = window.setTimeout(poll, 1000)
+        timer = window.setTimeout(poll, 3000)
       } catch (error) {
         if (cancelled) return
         setStatus({
@@ -166,8 +182,8 @@ export function AudioSeparatorPage() {
     try {
       const formData = new FormData()
       formData.append("audio", selectedFile)
-      const response = await fetch("/audio-separator", { method: "POST", body: formData })
-      const data = await response.json() as { job_id?: string; error?: string; message?: string }
+      const response = await fetch("/api/audio-separator", { method: "POST", body: formData })
+      const data = await readApiResponse<{ job_id?: string; error?: string; message?: string }>(response)
       if (!response.ok || !data.job_id) throw new Error(data.error || data.message || "Unable to start audio separation")
       setJobId(data.job_id)
       setStatus({ status: "queued", progress: 10, message: "Audio queued for separation..." })
@@ -284,7 +300,7 @@ export function AudioSeparatorPage() {
                     <div className="h-2 overflow-hidden rounded-full bg-muted">
                       <motion.div className="h-full rounded-full bg-foreground" animate={{ width: `${progress}%` }} transition={{ duration: 0.25 }} />
                     </div>
-                    <p className="text-xs text-muted-foreground">The first run downloads the separation model and can take several minutes.</p>
+                    <p className="text-xs text-muted-foreground">Quality-first separation combines specialist models and may take a moment while the GPU starts.</p>
                   </motion.div>
                 ) : status?.status === "error" ? (
                   <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
@@ -297,7 +313,7 @@ export function AudioSeparatorPage() {
                 ) : (
                   <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm font-medium">
                     <CheckCircle size={20} weight="fill" />
-                    Four stems are ready to preview and download.
+                    {stems.length} stems are ready to preview and download.
                   </motion.div>
                 )}
               </AnimatePresence>

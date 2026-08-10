@@ -2,9 +2,9 @@
 
 A powerful media downloader supporting video, audio, and image downloads from various platforms.
 
-MediaKeepa also includes an AI Audio Separator that splits uploaded songs into vocals, drums, bass, and music stems using `python-audio-separator` and the Demucs `htdemucs.yaml` model.
+MediaKeepa also includes an AI Audio Separator that uses Modal GPU acceleration to produce specialist vocals and instrumental tracks alongside Demucs drums, bass, and music stems. The quality pipeline combines `model_bs_roformer_ep_317_sdr_12.9755.ckpt` with Demucs' `htdemucs_ft.yaml` model.
 
-The first separation downloads the model into `audio_separator_models/`. You can override the model cache or model name with `AUDIO_SEPARATOR_MODEL_DIR` and `AUDIO_SEPARATOR_MODEL`.
+Deploy `modal_audio_separator.py` with `modal deploy modal_audio_separator.py` after authenticating the Modal CLI. Model weights are cached in the `mediakeepa-audio-models` Modal Volume. The backend defaults to `AUDIO_SEPARATOR_BACKEND=auto`, which uses Modal when configured and safely falls back to local Demucs. Quality-first defaults use 4 Demucs prediction shifts, 50% overlap, the model's native segment size, and lossless WAV output.
 
 ## 🚀 Quick Start
 

@@ -28,7 +28,7 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     proxy: {
-      '/audio-separator': {
+      '/api/audio-separator': {
         target: devApiTarget,
         changeOrigin: true
       },
@@ -36,7 +36,7 @@ export default defineConfig({
         target: devApiTarget,
         changeOrigin: true
       },
-      '/download': {
+      '^/download$': {
         target: devApiTarget,
         changeOrigin: true
       },
