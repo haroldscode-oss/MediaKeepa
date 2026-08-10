@@ -154,8 +154,8 @@ export function RecentUrls({ onUrlSelect }: RecentUrlsProps) {
       exit={{ opacity: 0, y: -20 }}
       transition={{ type: "spring", stiffness: 300, damping: 25 }}
     >
-      <Card className="p-4">
-        <div className="flex items-center gap-2 mb-3">
+      <Card className="gap-3 p-4">
+        <div className="flex items-center gap-2">
           <Clock size={16} className="text-muted-foreground" />
           <h3 className="text-sm font-medium">Recent URLs</h3>
         </div>
