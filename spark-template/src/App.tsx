@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom"
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -1370,17 +1370,37 @@ function DownloaderPage() {
   )
 }
 
+function PersistentPages() {
+  const { pathname } = useLocation()
+  const isDownloader = pathname === "/" || pathname === "/downloader"
+  const isAudioSeparator = pathname === "/audio-separator"
+  const isToolPage = isDownloader || isAudioSeparator
+
+  return (
+    <>
+      <section hidden={!isDownloader}>
+        <DownloaderPage />
+      </section>
+
+      <section hidden={!isAudioSeparator}>
+        <AudioSeparatorPage />
+      </section>
+
+      <div hidden={isToolPage}>
+        <Routes>
+          <Route path="/legal/:page" element={<LegalPage />} />
+        </Routes>
+      </div>
+    </>
+  )
+}
+
 function App() {
   return (
     <Router>
       <div className="min-h-screen bg-background flex flex-col">
         <div className="flex-1 px-4 py-6 sm:p-8">
-          <Routes>
-            <Route path="/" element={<DownloaderPage />} />
-            <Route path="/downloader" element={<DownloaderPage />} />
-            <Route path="/audio-separator" element={<AudioSeparatorPage />} />
-            <Route path="/legal/:page" element={<LegalPage />} />
-          </Routes>
+          <PersistentPages />
         </div>
         <Footer />
       </div>

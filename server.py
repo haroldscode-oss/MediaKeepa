@@ -601,18 +601,15 @@ def get_audio_separator_instance():
     return audio_separator_instance
 
 
-LOCAL_STEM_SPECS = (
+LOCAL_MODEL_STEM_SPECS = (
     ("vocals", "Vocals", "Vocals"),
     ("drums", "Drums", "Drums"),
     ("bass", "Bass", "Bass"),
-    ("music", "Other", "Music"),
+    ("other", "Other", "Other"),
 )
 
 MODAL_STEM_SPECS = (
     ("vocals", "Vocals"),
-    ("instrumental", "Instrumental"),
-    ("drums", "Drums"),
-    ("bass", "Bass"),
     ("music", "Music"),
 )
 
@@ -658,13 +655,13 @@ def run_local_audio_separation(job_id, input_path):
     separator = get_audio_separator_instance()
     custom_names = {
         model_stem: f"{job_id}_{stem_name}"
-        for stem_name, model_stem, _label in LOCAL_STEM_SPECS
+        for stem_name, model_stem, _label in LOCAL_MODEL_STEM_SPECS
     }
     output_files = separator.separate(input_path, custom_output_names=custom_names)
     output_names = {os.path.basename(path) for path in output_files}
 
-    stem_files = {}
-    for stem_name, _model_stem, _label in LOCAL_STEM_SPECS:
+    model_files = {}
+    for stem_name, _model_stem, _label in LOCAL_MODEL_STEM_SPECS:
         expected_prefix = f"{job_id}_{stem_name}."
         filename = next(
             (name for name in output_names if name.lower().startswith(expected_prefix.lower())),
@@ -672,9 +669,38 @@ def run_local_audio_separation(job_id, input_path):
         )
         if not filename:
             raise RuntimeError(f"The separator did not produce the {stem_name} stem.")
-        stem_files[stem_name] = filename
+        model_files[stem_name] = filename
 
-    return stem_files
+    import numpy as np
+    import soundfile as sf
+
+    music_filename = f"{job_id}_music.wav"
+    music_path = os.path.join(temp_downloads_path, music_filename)
+    accompaniment = []
+    sample_rate = None
+    for stem_name in ("drums", "bass", "other"):
+        stem_path = os.path.join(temp_downloads_path, model_files[stem_name])
+        audio, stem_sample_rate = sf.read(stem_path, dtype="float32", always_2d=True)
+        if sample_rate is None:
+            sample_rate = stem_sample_rate
+        elif stem_sample_rate != sample_rate:
+            raise RuntimeError("Local accompaniment stems used different sample rates.")
+        accompaniment.append(audio)
+
+    shortest_length = min(track.shape[0] for track in accompaniment)
+    music = np.sum([track[:shortest_length] for track in accompaniment], axis=0)
+    sf.write(music_path, np.clip(music, -1.0, 1.0), sample_rate, subtype="PCM_24")
+
+    for stem_name in ("drums", "bass", "other"):
+        try:
+            os.remove(os.path.join(temp_downloads_path, model_files[stem_name]))
+        except OSError:
+            pass
+
+    return {
+        "vocals": model_files["vocals"],
+        "music": music_filename,
+    }
 
 
 def complete_audio_separator_job(job_id, stem_files, processor):
@@ -734,10 +760,10 @@ def run_audio_separation(job_id, input_path):
                     job_id,
                     status="processing",
                     progress=35,
-                    message="Running Demucs and BS-RoFormer on Modal GPU...",
+                    message="Separating vocals and music with BS-RoFormer on Modal GPU...",
                 )
                 stem_files = run_modal_audio_separation(job_id, input_path)
-                processor = "modal-l4-quality"
+                processor = "modal-l4-bs-roformer"
             except Exception as modal_error:
                 if AUDIO_SEPARATOR_BACKEND == "modal":
                     raise

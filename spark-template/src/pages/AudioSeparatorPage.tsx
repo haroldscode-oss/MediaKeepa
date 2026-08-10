@@ -4,8 +4,6 @@ import {
   CheckCircle,
   DownloadSimple,
   FileAudio,
-  Guitar,
-  Metronome,
   MusicNote,
   Pause,
   Play,
@@ -15,7 +13,8 @@ import {
 } from "@phosphor-icons/react"
 import { toast } from "sonner"
 import { AppHeader } from "@/components/AppHeader"
-import { StemFader } from "@/components/StemFader"
+import { StemVolumeControl } from "@/components/StemVolumeControl"
+import { StemWaveform } from "@/components/StemWaveform"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
@@ -60,7 +59,7 @@ function isAcceptedAudio(file: File) {
 
 function waveformFor(name: string) {
   const seed = [...name].reduce((total, character) => total + character.charCodeAt(0), 0)
-  return Array.from({ length: 72 }, (_, index) => {
+  return Array.from({ length: 96 }, (_, index) => {
     const wave = Math.sin((index + seed) * 0.63) * 0.25
     const pulse = Math.sin((index + seed) * 0.19) * 0.18
     return Math.max(0.18, Math.min(0.95, 0.5 + wave + pulse))
@@ -70,8 +69,6 @@ function waveformFor(name: string) {
 function stemIcon(name: string) {
   const normalized = name.toLowerCase()
   if (normalized.includes("vocal")) return SpeakerHigh
-  if (normalized.includes("drum")) return Metronome
-  if (normalized.includes("bass")) return Guitar
   return MusicNote
 }
 
@@ -87,6 +84,8 @@ export function AudioSeparatorPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [playingStems, setPlayingStems] = useState<string[]>([])
   const [volumes, setVolumes] = useState<Record<string, number>>({})
+  const [currentTimes, setCurrentTimes] = useState<Record<string, number>>({})
+  const [durations, setDurations] = useState<Record<string, number>>({})
 
   const isProcessing = isUploading || Boolean(jobId && status?.status !== "completed" && status?.status !== "error")
 
@@ -108,7 +107,9 @@ export function AudioSeparatorPage() {
           const completedStems = data.stems || []
           setStems(completedStems)
           setArchiveUrl(data.archive_url || null)
-          setVolumes(Object.fromEntries(completedStems.map((stem) => [stem.name, 75])))
+          setVolumes(Object.fromEntries(completedStems.map((stem) => [stem.name, 100])))
+          setCurrentTimes(Object.fromEntries(completedStems.map((stem) => [stem.name, 0])))
+          setDurations(Object.fromEntries(completedStems.map((stem) => [stem.name, 0])))
           toast.success("Audio separated successfully")
           return
         }
@@ -141,6 +142,30 @@ export function AudioSeparatorPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (playingStems.length === 0) return
+
+    let animationFrame = 0
+    let lastUpdate = 0
+    const syncPlayheads = (timestamp: number) => {
+      if (timestamp - lastUpdate >= 50) {
+        lastUpdate = timestamp
+        setCurrentTimes((current) => {
+          const next = { ...current }
+          playingStems.forEach((stemName) => {
+            const audio = audioRefs.current[stemName]
+            if (audio) next[stemName] = audio.currentTime
+          })
+          return next
+        })
+      }
+      animationFrame = window.requestAnimationFrame(syncPlayheads)
+    }
+
+    animationFrame = window.requestAnimationFrame(syncPlayheads)
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [playingStems])
+
   const chooseFile = (file: File) => {
     if (!isAcceptedAudio(file)) {
       toast.error("Choose an MP3, WAV, FLAC, M4A, AAC, or OGG file")
@@ -159,6 +184,8 @@ export function AudioSeparatorPage() {
     setArchiveUrl(null)
     setPlayingStems([])
     setVolumes({})
+    setCurrentTimes({})
+    setDurations({})
   }
 
   const reset = () => {
@@ -171,6 +198,8 @@ export function AudioSeparatorPage() {
     setArchiveUrl(null)
     setPlayingStems([])
     setVolumes({})
+    setCurrentTimes({})
+    setDurations({})
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
@@ -196,19 +225,6 @@ export function AudioSeparatorPage() {
     }
   }
 
-  const toggleStem = async (stemName: string) => {
-    const audio = audioRefs.current[stemName]
-    if (!audio) return
-
-    if (audio.paused) {
-      await audio.play()
-      setPlayingStems((current) => [...new Set([...current, stemName])])
-    } else {
-      audio.pause()
-      setPlayingStems((current) => current.filter((name) => name !== stemName))
-    }
-  }
-
   const toggleAll = async () => {
     const allPlaying = stems.length > 0 && stems.every((stem) => playingStems.includes(stem.name))
     if (allPlaying) {
@@ -217,18 +233,38 @@ export function AudioSeparatorPage() {
       return
     }
 
+    const referenceStemName = stems[0]?.name
+    const referenceAudio = referenceStemName ? audioRefs.current[referenceStemName] : null
+    const referenceTime = referenceAudio && referenceAudio.currentTime < referenceAudio.duration
+      ? referenceAudio.currentTime
+      : 0
+
     await Promise.all(stems.map(async (stem) => {
       const audio = audioRefs.current[stem.name]
-      if (audio?.paused) await audio.play()
+      if (!audio) return
+      audio.currentTime = referenceTime
+      if (audio.paused) await audio.play()
     }))
     setPlayingStems(stems.map((stem) => stem.name))
   }
 
-  const updateVolume = (stemName: string, nextValue: number[]) => {
-    const nextVolume = nextValue[0] ?? 75
+  const updateVolume = (stemName: string, nextVolume: number) => {
     setVolumes((current) => ({ ...current, [stemName]: nextVolume }))
     const audio = audioRefs.current[stemName]
     if (audio) audio.volume = nextVolume / 100
+  }
+
+  const seekAll = (time: number) => {
+    const nextTimes: Record<string, number> = {}
+    stems.forEach((stem) => {
+      const audio = audioRefs.current[stem.name]
+      const nextTime = audio && Number.isFinite(audio.duration)
+        ? Math.min(time, audio.duration)
+        : time
+      if (audio) audio.currentTime = nextTime
+      nextTimes[stem.name] = nextTime
+    })
+    setCurrentTimes((current) => ({ ...current, ...nextTimes }))
   }
 
   const allPlaying = stems.length > 0 && stems.every((stem) => playingStems.includes(stem.name))
@@ -300,7 +336,7 @@ export function AudioSeparatorPage() {
                     <div className="h-2 overflow-hidden rounded-full bg-muted">
                       <motion.div className="h-full rounded-full bg-foreground" animate={{ width: `${progress}%` }} transition={{ duration: 0.25 }} />
                     </div>
-                    <p className="text-xs text-muted-foreground">Quality-first separation combines specialist models and may take a moment while the GPU starts.</p>
+                    <p className="text-xs text-muted-foreground">Quality-first vocal separation uses a specialist GPU model and may take a moment while the GPU starts.</p>
                   </motion.div>
                 ) : status?.status === "error" ? (
                   <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
@@ -313,7 +349,7 @@ export function AudioSeparatorPage() {
                 ) : (
                   <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm font-medium">
                     <CheckCircle size={20} weight="fill" />
-                    {stems.length} stems are ready to preview and download.
+                    Vocals and Music are ready to preview and download.
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -327,33 +363,30 @@ export function AudioSeparatorPage() {
                       const Icon = stemIcon(stem.name)
                       const waveform = waveformFor(stem.name)
                       const isPlaying = playingStems.includes(stem.name)
-                      const volume = volumes[stem.name] ?? 75
+                      const volume = volumes[stem.name] ?? 100
+                      const currentTime = currentTimes[stem.name] ?? 0
+                      const duration = durations[stem.name] ?? 0
 
                       return (
-                        <div key={stem.name} className="grid items-center gap-4 border-b border-border py-5 last:border-b-0 lg:grid-cols-[130px_180px_1fr_auto]">
+                        <div key={stem.name} className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-4 border-b border-border py-5 last:border-b-0 lg:grid-cols-[120px_190px_minmax(0,1fr)_auto]">
                           <div className="flex items-center gap-3">
                             <Icon size={22} weight="fill" />
                             <span className="font-semibold">{stem.label}</span>
                           </div>
-                          <StemFader value={[volume]} onValueChange={(value) => updateVolume(stem.name, value)} max={100} step={1} aria-label={`${stem.label} volume`} />
-                          <button
-                            type="button"
-                            onClick={() => void toggleStem(stem.name)}
-                            className="flex h-14 items-center gap-0.5 overflow-hidden rounded-xl bg-muted px-3 text-foreground"
-                            aria-label={`${isPlaying ? "Pause" : "Play"} ${stem.label}`}
-                          >
-                            {waveform.map((height, index) => (
-                              <span
-                                key={index}
-                                className="min-w-px flex-1 rounded-full bg-current transition-opacity"
-                                style={{ height: `${height * volume}%`, opacity: isPlaying ? 0.75 : 0.28 }}
-                              />
-                            ))}
-                          </button>
-                          <div className="flex items-center justify-end gap-2">
-                            <Button variant="outline" size="icon" onClick={() => void toggleStem(stem.name)} aria-label={`${isPlaying ? "Pause" : "Play"} ${stem.label}`}>
-                              {isPlaying ? <Pause size={18} weight="fill" /> : <Play size={18} weight="fill" />}
-                            </Button>
+                          <StemVolumeControl
+                            label={stem.label}
+                            value={volume}
+                            onChange={(value) => updateVolume(stem.name, value)}
+                          />
+                          <StemWaveform
+                            label={stem.label}
+                            waveform={waveform}
+                            currentTime={currentTime}
+                            duration={duration}
+                            isPlaying={isPlaying}
+                            onSeek={seekAll}
+                          />
+                          <div className="flex items-center gap-2 lg:justify-end">
                             <Button variant="outline" size="icon" asChild aria-label={`Download ${stem.label}`}>
                               <a href={stem.download_url} download><DownloadSimple size={18} weight="bold" /></a>
                             </Button>
@@ -361,7 +394,26 @@ export function AudioSeparatorPage() {
                               ref={(element) => { audioRefs.current[stem.name] = element }}
                               src={stem.url}
                               preload="metadata"
-                              onEnded={() => setPlayingStems((current) => current.filter((name) => name !== stem.name))}
+                              onLoadedMetadata={(event) => {
+                                const audio = event.currentTarget
+                                const nextDuration = audio.duration
+                                const nextTime = audio.currentTime
+                                audio.volume = volume / 100
+                                setDurations((current) => ({ ...current, [stem.name]: nextDuration }))
+                                setCurrentTimes((current) => ({ ...current, [stem.name]: nextTime }))
+                              }}
+                              onTimeUpdate={(event) => {
+                                if (!isPlaying) {
+                                  const nextTime = event.currentTarget.currentTime
+                                  setCurrentTimes((current) => ({ ...current, [stem.name]: nextTime }))
+                                }
+                              }}
+                              onEnded={(event) => {
+                                const endTime = event.currentTarget.duration
+                                setCurrentTimes((current) => ({ ...current, [stem.name]: endTime }))
+                                stems.forEach((currentStem) => audioRefs.current[currentStem.name]?.pause())
+                                setPlayingStems([])
+                              }}
                             />
                           </div>
                         </div>
@@ -371,13 +423,13 @@ export function AudioSeparatorPage() {
                     <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
                       <Button variant="outline" onClick={() => void toggleAll()} className="gap-2">
                         {allPlaying ? <Pause size={19} weight="fill" /> : <Play size={19} weight="fill" />}
-                        {allPlaying ? "Pause all" : "Play all"}
+                        {allPlaying ? "Pause" : "Play"}
                       </Button>
                       {archiveUrl && (
                         <Button asChild className="gap-2 bg-black text-white hover:bg-black dark:bg-black dark:text-white dark:hover:bg-black">
                           <a href={archiveUrl} download>
                             <DownloadSimple size={18} weight="bold" />
-                            Download all stems
+                            Download both tracks
                           </a>
                         </Button>
                       )}

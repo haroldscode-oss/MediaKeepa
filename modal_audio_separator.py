@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 import zipfile
 from pathlib import Path
@@ -12,7 +11,6 @@ import modal
 
 APP_NAME = "mediakeepa-audio-separator"
 MODEL_DIR = "/models"
-DEMUCS_MODEL = "htdemucs_ft.yaml"
 VOCAL_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "aac", "ogg"}
 
@@ -28,32 +26,17 @@ model_volume = modal.Volume.from_name(
     create_if_missing=True,
 )
 
-_demucs_separator = None
 _vocal_separator = None
 
 
-def _load_separators(output_dir: str):
-    """Load both quality models once per warm GPU container."""
-    global _demucs_separator, _vocal_separator
+def _load_separator(output_dir: str):
+    """Load the specialist vocal/accompaniment model once per warm container."""
+    global _vocal_separator
 
-    if _demucs_separator is not None and _vocal_separator is not None:
-        return _demucs_separator, _vocal_separator
+    if _vocal_separator is not None:
+        return _vocal_separator
 
     from audio_separator.separator import Separator
-
-    _demucs_separator = Separator(
-        model_file_dir=MODEL_DIR,
-        output_dir=output_dir,
-        output_format="WAV",
-        use_autocast=False,
-        demucs_params={
-            "segment_size": "Default",
-            "shifts": 4,
-            "overlap": 0.5,
-            "segments_enabled": True,
-        },
-    )
-    _demucs_separator.load_model(DEMUCS_MODEL)
 
     _vocal_separator = Separator(
         model_file_dir=MODEL_DIR,
@@ -65,7 +48,7 @@ def _load_separators(output_dir: str):
 
     # Persist first-run downloads so later containers reuse the same weights.
     model_volume.commit()
-    return _demucs_separator, _vocal_separator
+    return _vocal_separator
 
 
 def _set_output_dir(separator, output_dir: str) -> None:
@@ -99,7 +82,7 @@ def _find_output(
     retries=modal.Retries(max_retries=1, backoff_coefficient=2.0),
 )
 def separate_audio(audio_bytes: bytes, extension: str) -> bytes:
-    """Return a ZIP containing specialist vocals/instrumental plus Demucs stems."""
+    """Return a ZIP containing the specialist vocals and full music tracks."""
     safe_extension = extension.lower().lstrip(".")
     if safe_extension not in ALLOWED_EXTENSIONS:
         raise ValueError("Unsupported audio file extension.")
@@ -112,33 +95,20 @@ def separate_audio(audio_bytes: bytes, extension: str) -> bytes:
         output_dir.mkdir()
         input_path.write_bytes(audio_bytes)
 
-        demucs_separator, vocal_separator = _load_separators(str(output_dir))
-        _set_output_dir(demucs_separator, str(output_dir))
+        vocal_separator = _load_separator(str(output_dir))
         _set_output_dir(vocal_separator, str(output_dir))
 
-        demucs_outputs = demucs_separator.separate(
-            str(input_path),
-            custom_output_names={
-                "Vocals": "demucs_vocals",
-                "Drums": "drums",
-                "Bass": "bass",
-                "Other": "music",
-            },
-        )
         vocal_outputs = vocal_separator.separate(
             str(input_path),
             custom_output_names={
                 "Vocals": "vocals",
-                "Instrumental": "instrumental",
+                "Instrumental": "music",
             },
         )
 
         stem_paths = {
             "vocals.wav": _find_output(vocal_outputs, "vocals.", output_dir),
-            "instrumental.wav": _find_output(vocal_outputs, "instrumental.", output_dir),
-            "drums.wav": _find_output(demucs_outputs, "drums.", output_dir),
-            "bass.wav": _find_output(demucs_outputs, "bass.", output_dir),
-            "music.wav": _find_output(demucs_outputs, "music.", output_dir),
+            "music.wav": _find_output(vocal_outputs, "music.", output_dir),
         }
 
         archive_path = Path(temp_dir) / "mediakeepa-stems.zip"
