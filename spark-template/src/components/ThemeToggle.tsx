@@ -44,7 +44,7 @@ export function ThemeToggle() {
         transition={{ duration: 0.2, ease: "easeInOut" }}
         className="absolute"
       >
-        <Sun size={20} weight="fill" />
+        <Sun size={20} weight="fill" className="text-black" />
       </motion.div>
       <motion.div
         initial={false}
