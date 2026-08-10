@@ -973,7 +973,7 @@ function HomePage() {
                 onFocus={() => setIsInputFocused(true)}
                 onBlur={() => setIsInputFocused(false)}
                 ref={inputRef}
-                className="h-14 text-base pl-12 pr-12 border-2 focus-visible:ring-2 focus-visible:ring-accent"
+                className="h-14 text-base pl-12 pr-12 border-2 focus-visible:border-input focus-visible:ring-0"
               />
               {url && (
                 <button

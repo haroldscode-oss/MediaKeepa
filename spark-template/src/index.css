@@ -15,6 +15,18 @@
     transition: background-color 0.3s ease, color 0.3s ease;
   }
 
+  html.theme-changing,
+  html.theme-changing *,
+  html.theme-changing *::before,
+  html.theme-changing *::after {
+    transition: none !important;
+  }
+
+  html.theme-changing *::-webkit-scrollbar-track,
+  html.theme-changing *::-webkit-scrollbar-thumb {
+    transition: none !important;
+  }
+
   /* Custom scrollbar - ShadCN-inspired colors with default width */
   ::-webkit-scrollbar-track {
     background: transparent;

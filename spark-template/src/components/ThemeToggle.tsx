@@ -21,8 +21,13 @@ export function ThemeToggle() {
     setTheme(newTheme)
     
     const root = document.documentElement
+    root.classList.add("theme-changing")
+    void root.offsetWidth
+
     root.classList.remove("light", "dark")
     root.classList.add(newTheme)
+    void root.offsetWidth
+    root.classList.remove("theme-changing")
     
     localStorage.setItem("theme", newTheme)
   }
