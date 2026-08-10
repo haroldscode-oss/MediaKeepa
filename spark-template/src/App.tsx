@@ -1386,11 +1386,11 @@ function PersistentPages() {
         <AudioSeparatorPage />
       </section>
 
-      <div hidden={isToolPage}>
+      {!isToolPage && (
         <Routes>
           <Route path="/legal/:page" element={<LegalPage />} />
         </Routes>
-      </div>
+      )}
     </>
   )
 }

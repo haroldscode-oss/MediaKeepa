@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   CheckCircle,
@@ -34,6 +34,12 @@ type SeparatorStatus = {
   message: string
   stems?: SeparatorStem[]
   archive_url?: string
+}
+
+type StemAudioGraph = {
+  element: HTMLAudioElement
+  source: MediaElementAudioSourceNode
+  analyser: AnalyserNode
 }
 
 async function readApiResponse<T>(response: Response): Promise<T> {
@@ -75,6 +81,8 @@ function stemIcon(name: string) {
 export function AudioSeparatorPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const audioGraphsRef = useRef<Record<string, StemAudioGraph>>({})
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [status, setStatus] = useState<SeparatorStatus | null>(null)
@@ -86,8 +94,57 @@ export function AudioSeparatorPage() {
   const [volumes, setVolumes] = useState<Record<string, number>>({})
   const [currentTimes, setCurrentTimes] = useState<Record<string, number>>({})
   const [durations, setDurations] = useState<Record<string, number>>({})
+  const [analysers, setAnalysers] = useState<Record<string, AnalyserNode | null>>({})
 
   const isProcessing = isUploading || Boolean(jobId && status?.status !== "completed" && status?.status !== "error")
+
+  const disposeAudioGraph = useCallback(() => {
+    Object.values(audioGraphsRef.current).forEach((graph) => {
+      graph.source.disconnect()
+      graph.analyser.disconnect()
+    })
+    audioGraphsRef.current = {}
+
+    const context = audioContextRef.current
+    audioContextRef.current = null
+    if (context && context.state !== "closed") void context.close()
+    setAnalysers({})
+  }, [])
+
+  const ensureAudioGraph = useCallback((stemName: string, audio: HTMLAudioElement) => {
+    const existingGraph = audioGraphsRef.current[stemName]
+    if (existingGraph?.element === audio) return existingGraph.analyser
+    if (existingGraph) {
+      Object.values(audioGraphsRef.current).forEach((graph) => {
+        graph.source.disconnect()
+        graph.analyser.disconnect()
+      })
+      audioGraphsRef.current = {}
+      const staleContext = audioContextRef.current
+      audioContextRef.current = null
+      if (staleContext && staleContext.state !== "closed") void staleContext.close()
+      setAnalysers({})
+    }
+
+    let context = audioContextRef.current
+    if (!context || context.state === "closed") {
+      context = new AudioContext()
+      audioContextRef.current = context
+    }
+
+    const source = context.createMediaElementSource(audio)
+    const analyser = context.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.smoothingTimeConstant = 0.28
+    analyser.minDecibels = -96
+    analyser.maxDecibels = -12
+    source.connect(analyser)
+    analyser.connect(context.destination)
+
+    audioGraphsRef.current[stemName] = { element: audio, source, analyser }
+    setAnalysers((current) => ({ ...current, [stemName]: analyser }))
+    return analyser
+  }, [])
 
   useEffect(() => {
     if (!jobId) return
@@ -139,6 +196,12 @@ export function AudioSeparatorPage() {
   useEffect(() => {
     return () => {
       Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+      Object.values(audioGraphsRef.current).forEach((graph) => {
+        graph.source.disconnect()
+        graph.analyser.disconnect()
+      })
+      const context = audioContextRef.current
+      if (context && context.state !== "closed") void context.close()
     }
   }, [])
 
@@ -147,7 +210,22 @@ export function AudioSeparatorPage() {
 
     let animationFrame = 0
     let lastUpdate = 0
+    let lastCorrection = 0
     const syncPlayheads = (timestamp: number) => {
+      const referenceAudio = audioRefs.current[playingStems[0]]
+      const referenceTime = referenceAudio?.currentTime
+
+      if (referenceAudio && referenceTime !== undefined && timestamp - lastCorrection >= 250) {
+        lastCorrection = timestamp
+        playingStems.slice(1).forEach((stemName) => {
+          const audio = audioRefs.current[stemName]
+          if (!audio || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+          if (Math.abs(audio.currentTime - referenceTime) > 0.018) {
+            audio.currentTime = referenceTime
+          }
+        })
+      }
+
       if (timestamp - lastUpdate >= 50) {
         lastUpdate = timestamp
         setCurrentTimes((current) => {
@@ -177,6 +255,7 @@ export function AudioSeparatorPage() {
     }
 
     Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+    disposeAudioGraph()
     setSelectedFile(file)
     setJobId(null)
     setStatus(null)
@@ -190,6 +269,7 @@ export function AudioSeparatorPage() {
 
   const reset = () => {
     Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+    disposeAudioGraph()
     audioRefs.current = {}
     setSelectedFile(null)
     setJobId(null)
@@ -228,24 +308,55 @@ export function AudioSeparatorPage() {
   const toggleAll = async () => {
     const allPlaying = stems.length > 0 && stems.every((stem) => playingStems.includes(stem.name))
     if (allPlaying) {
-      stems.forEach((stem) => audioRefs.current[stem.name]?.pause())
+      stems.forEach((stem) => {
+        const audio = audioRefs.current[stem.name]
+        if (!audio) return
+        audio.pause()
+        audio.playbackRate = 1
+      })
       setPlayingStems([])
       return
     }
 
     const referenceStemName = stems[0]?.name
     const referenceAudio = referenceStemName ? audioRefs.current[referenceStemName] : null
-    const referenceTime = referenceAudio && referenceAudio.currentTime < referenceAudio.duration
+    const referenceTime = referenceAudio
+      && Number.isFinite(referenceAudio.duration)
+      && referenceAudio.duration - referenceAudio.currentTime > 0.15
       ? referenceAudio.currentTime
       : 0
 
-    await Promise.all(stems.map(async (stem) => {
-      const audio = audioRefs.current[stem.name]
-      if (!audio) return
-      audio.currentTime = referenceTime
-      if (audio.paused) await audio.play()
-    }))
-    setPlayingStems(stems.map((stem) => stem.name))
+    try {
+      stems.forEach((stem) => {
+        const audio = audioRefs.current[stem.name]
+        if (!audio) return
+        ensureAudioGraph(stem.name, audio)
+        audio.currentTime = referenceTime
+        audio.playbackRate = 1
+      })
+
+      const context = audioContextRef.current
+      if (context?.state === "suspended") await context.resume()
+
+      await Promise.all(stems.map(async (stem) => {
+        const audio = audioRefs.current[stem.name]
+        if (audio?.paused) await audio.play()
+      }))
+
+      const synchronizedTime = Math.max(
+        referenceTime,
+        ...stems.map((stem) => audioRefs.current[stem.name]?.currentTime ?? referenceTime),
+      )
+      stems.forEach((stem) => {
+        const audio = audioRefs.current[stem.name]
+        if (audio) audio.currentTime = synchronizedTime
+      })
+      setPlayingStems(stems.map((stem) => stem.name))
+    } catch (error) {
+      stems.forEach((stem) => audioRefs.current[stem.name]?.pause())
+      setPlayingStems([])
+      toast.error(error instanceof Error ? error.message : "Unable to play the separated audio")
+    }
   }
 
   const updateVolume = (stemName: string, nextVolume: number) => {
@@ -262,6 +373,7 @@ export function AudioSeparatorPage() {
         ? Math.min(time, audio.duration)
         : time
       if (audio) audio.currentTime = nextTime
+      if (audio) audio.playbackRate = 1
       nextTimes[stem.name] = nextTime
     })
     setCurrentTimes((current) => ({ ...current, ...nextTimes }))
@@ -380,10 +492,12 @@ export function AudioSeparatorPage() {
                           />
                           <StemWaveform
                             label={stem.label}
+                            response={stem.name.toLowerCase().includes("music") ? "music" : "voice"}
                             waveform={waveform}
                             currentTime={currentTime}
                             duration={duration}
                             isPlaying={isPlaying}
+                            analyser={analysers[stem.name] ?? null}
                             onSeek={seekAll}
                           />
                           <div className="flex items-center gap-2 lg:justify-end">
@@ -391,6 +505,7 @@ export function AudioSeparatorPage() {
                               <a href={stem.download_url} download><DownloadSimple size={18} weight="bold" /></a>
                             </Button>
                             <audio
+                              key={`rhythm-gated:${stem.url}`}
                               ref={(element) => { audioRefs.current[stem.name] = element }}
                               src={stem.url}
                               preload="metadata"
@@ -408,10 +523,18 @@ export function AudioSeparatorPage() {
                                   setCurrentTimes((current) => ({ ...current, [stem.name]: nextTime }))
                                 }
                               }}
-                              onEnded={(event) => {
-                                const endTime = event.currentTarget.duration
-                                setCurrentTimes((current) => ({ ...current, [stem.name]: endTime }))
-                                stems.forEach((currentStem) => audioRefs.current[currentStem.name]?.pause())
+                              onEnded={() => {
+                                const endTimes: Record<string, number> = {}
+                                stems.forEach((currentStem) => {
+                                  const audio = audioRefs.current[currentStem.name]
+                                  if (!audio) return
+                                  audio.pause()
+                                  if (Number.isFinite(audio.duration)) {
+                                    audio.currentTime = audio.duration
+                                    endTimes[currentStem.name] = audio.duration
+                                  }
+                                })
+                                setCurrentTimes((current) => ({ ...current, ...endTimes }))
                                 setPlayingStems([])
                               }}
                             />
