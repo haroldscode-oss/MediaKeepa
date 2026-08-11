@@ -22,6 +22,61 @@ function formatAudioTime(seconds: number) {
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
 }
 
+type AdaptiveProfile = {
+  mean: number
+  deviation: number
+  samples: number
+}
+
+type AdaptiveRange = {
+  floor: number
+  peak: number
+  initialized: boolean
+}
+
+function updateAdaptiveProfile(profile: AdaptiveProfile, value: number) {
+  if (profile.samples === 0) {
+    profile.mean = value
+    profile.deviation = Math.max(0.01, value * 0.2)
+    profile.samples = 1
+    return
+  }
+
+  const alpha = profile.samples < 120 ? 0.045 : 0.012
+  const difference = value - profile.mean
+  profile.mean += difference * alpha
+  profile.deviation += (Math.abs(difference) - profile.deviation) * Math.min(0.08, alpha * 1.8)
+  profile.samples += 1
+}
+
+function adaptiveThreshold(
+  profile: AdaptiveProfile,
+  initialThreshold: number,
+  minimumThreshold: number,
+  deviationWeight: number,
+) {
+  if (profile.samples < 60) return initialThreshold
+  return Math.max(minimumThreshold, profile.mean + profile.deviation * deviationWeight)
+}
+
+function adaptiveLevel(range: AdaptiveRange, value: number) {
+  if (!range.initialized) {
+    range.floor = value
+    range.peak = value + 0.04
+    range.initialized = true
+    return 0
+  }
+
+  range.floor = value < range.floor
+    ? value
+    : range.floor * 0.996 + value * 0.004
+  range.peak = value > range.peak
+    ? value
+    : Math.max(range.floor + 0.04, range.peak * 0.997)
+
+  return clamp((value - range.floor) / Math.max(0.04, range.peak - range.floor), 0, 1)
+}
+
 export function StemWaveform({
   label,
   response,
@@ -61,6 +116,12 @@ export function StemWaveform({
     const snareHistory: number[] = []
     const drumHistory: number[] = []
     const musicHistory: number[] = []
+    const kickProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
+    const snareProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
+    const drumProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
+    const musicProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
+    const bassRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
+    const musicRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
     const hertzPerBin = analyser.context.sampleRate / analyser.fftSize
     let previousKick = 0
     let previousSnare = 0
@@ -155,23 +216,27 @@ export function StemWaveform({
       const snareScore = relativeSnareSurge + snareAttack * 5.5 + snareFlux * 4.8
       const drumScore = relativeDrumSurge * 0.85 + drumAttack * 4.2 + drumFlux * 5.5
       const musicScore = relativeMusicSurge * 0.65 + musicAttack * 3.2 + fullMusicFlux * 4
+      const kickThreshold = adaptiveThreshold(kickProfile, 0.6, 0.28, 2.1)
+      const snareThreshold = adaptiveThreshold(snareProfile, 1.4, 0.55, 2.2)
+      const drumThreshold = adaptiveThreshold(drumProfile, 2.2, 0.8, 2.25)
+      const musicThreshold = adaptiveThreshold(musicProfile, 2, 0.75, 2.2)
       const now = performance.now()
-      if (response === "music" && kickScore > 0.6 && now - lastKickAt > 140) {
-        kickPulse = Math.max(kickPulse, clamp(0.55 + (kickScore - 0.6) * 0.75, 0, 1.25))
+      if (response === "music" && kickScore > kickThreshold && now - lastKickAt > 140) {
+        kickPulse = Math.max(kickPulse, clamp(0.55 + (kickScore - kickThreshold) * 0.75, 0, 1.25))
         kickHoldUntil = now + 65
         lastKickAt = now
       } else if (now > kickHoldUntil) {
         kickPulse *= 0.85
       }
-      if (response === "music" && snareScore > 1.4 && now - lastSnareAt > 120) {
-        snarePulse = Math.max(snarePulse, clamp(0.28 + (snareScore - 1.4) * 0.25, 0, 0.6))
+      if (response === "music" && snareScore > snareThreshold && now - lastSnareAt > 120) {
+        snarePulse = Math.max(snarePulse, clamp(0.28 + (snareScore - snareThreshold) * 0.25, 0, 0.6))
         snareHoldUntil = now + 35
         lastSnareAt = now
       } else if (now > snareHoldUntil) {
         snarePulse *= 0.74
       }
-      if (response === "music" && drumScore > 2.2 && now - lastDrumAt > 85) {
-        drumPulse = Math.max(drumPulse, clamp(0.18 + (drumScore - 2.2) * 0.11, 0, 0.42))
+      if (response === "music" && drumScore > drumThreshold && now - lastDrumAt > 85) {
+        drumPulse = Math.max(drumPulse, clamp(0.18 + (drumScore - drumThreshold) * 0.11, 0, 0.42))
         drumHoldUntil = now + 20
         lastDrumAt = now
       } else if (now > drumHoldUntil) {
@@ -182,8 +247,8 @@ export function StemWaveform({
         snarePulse / 0.6,
         drumPulse / 0.42,
       ), 0, 1)
-      if (response === "music" && musicScore > 2 && now - lastMusicAt > 130) {
-        const gatedAccent = clamp(0.12 + (musicScore - 2) * 0.18, 0, 0.38)
+      if (response === "music" && musicScore > musicThreshold && now - lastMusicAt > 130) {
+        const gatedAccent = clamp(0.12 + (musicScore - musicThreshold) * 0.18, 0, 0.38)
           * (0.35 + rhythmConfidence * 0.65)
         musicAccentPulse = Math.max(musicAccentPulse, gatedAccent)
         musicHoldUntil = now + 45
@@ -196,11 +261,18 @@ export function StemWaveform({
       previousDrum = drumEnergy
       previousMusic = fullMusicEnergy
 
-      const bassBodyTarget = clamp((bassEnergy - 0.18) / 0.62, 0, 1)
+      if (response === "music") {
+        updateAdaptiveProfile(kickProfile, kickScore)
+        updateAdaptiveProfile(snareProfile, snareScore)
+        updateAdaptiveProfile(drumProfile, drumScore)
+        updateAdaptiveProfile(musicProfile, musicScore)
+      }
+
+      const bassBodyTarget = response === "music" ? adaptiveLevel(bassRange, bassEnergy) : 0
       bassBodyEnvelope = bassBodyTarget > bassBodyEnvelope
         ? bassBodyEnvelope * 0.42 + bassBodyTarget * 0.58
         : bassBodyEnvelope * 0.92 + bassBodyTarget * 0.08
-      const musicBodyTarget = clamp((fullMusicEnergy - 0.05) / 0.35, 0, 1)
+      const musicBodyTarget = response === "music" ? adaptiveLevel(musicRange, fullMusicEnergy) : 0
       musicBodyEnvelope = musicBodyTarget > musicBodyEnvelope
         ? musicBodyEnvelope * 0.75 + musicBodyTarget * 0.25
         : musicBodyEnvelope * 0.94 + musicBodyTarget * 0.06
