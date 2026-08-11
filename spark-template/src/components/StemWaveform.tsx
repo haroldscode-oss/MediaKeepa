@@ -112,6 +112,8 @@ export function StemWaveform({
 
     const frequencyData = new Uint8Array(analyser.frequencyBinCount)
     const previousSpectrum = new Uint8Array(analyser.frequencyBinCount)
+    const energyPrefix = new Float32Array(analyser.frequencyBinCount + 1)
+    const fluxPrefix = new Float32Array(analyser.frequencyBinCount + 1)
     const kickHistory: number[] = []
     const snareHistory: number[] = []
     const drumHistory: number[] = []
@@ -121,6 +123,8 @@ export function StemWaveform({
     const drumProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
     const musicProfile: AdaptiveProfile = { mean: 0, deviation: 0, samples: 0 }
     const bassRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
+    const harmonicRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
+    const detailRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
     const musicRange: AdaptiveRange = { floor: 0, peak: 0, initialized: false }
     const hertzPerBin = analyser.context.sampleRate / analyser.fftSize
     let previousKick = 0
@@ -132,6 +136,8 @@ export function StemWaveform({
     let drumPulse = 0
     let musicAccentPulse = 0
     let bassBodyEnvelope = 0
+    let harmonicBodyEnvelope = 0
+    let detailBodyEnvelope = 0
     let musicBodyEnvelope = 0
     let kickHoldUntil = 0
     let snareHoldUntil = 0
@@ -146,41 +152,42 @@ export function StemWaveform({
     const averageBand = (startHertz: number, endHertz: number) => {
       const startBin = clamp(Math.floor(startHertz / hertzPerBin), 1, frequencyData.length - 1)
       const endBin = clamp(Math.ceil(endHertz / hertzPerBin), startBin + 1, frequencyData.length)
-      let total = 0
-      for (let index = startBin; index < endBin; index += 1) {
-        total += frequencyData[index]
-      }
+      const total = energyPrefix[endBin] - energyPrefix[startBin]
       return total / Math.max(1, endBin - startBin) / 255
     }
 
     const drawSpectrum = () => {
       analyser.getByteFrequencyData(frequencyData)
+      for (let index = 0; index < frequencyData.length; index += 1) {
+        energyPrefix[index + 1] = energyPrefix[index] + frequencyData[index]
+        fluxPrefix[index + 1] = fluxPrefix[index]
+          + Math.max(0, frequencyData[index] - previousSpectrum[index]) / 255
+      }
 
       const kickEnergy = averageBand(42, 145)
       const bassEnergy = averageBand(35, 230)
+      const harmonicEnergy = averageBand(230, 5000)
+      const detailEnergy = averageBand(5000, 16000)
       const snareBody = averageBand(150, 320)
       const snareCrack = averageBand(1800, 5200)
       const snareEnergy = snareBody * 0.38 + snareCrack * 0.62
       const drumBody = averageBand(80, 650)
       const drumTop = averageBand(5000, 12000)
       const drumEnergy = drumBody * 0.45 + drumTop * 0.55
-      const fullMusicEnergy = averageBand(35, 14000)
+      const fullMusicEnergy = averageBand(25, 16000)
       const voiceEnergy = averageBand(180, 4200)
 
       const positiveFlux = (startHertz: number, endHertz: number) => {
         const startBin = clamp(Math.floor(startHertz / hertzPerBin), 1, frequencyData.length - 1)
         const endBin = clamp(Math.ceil(endHertz / hertzPerBin), startBin + 1, frequencyData.length)
-        let flux = 0
-        for (let index = startBin; index < endBin; index += 1) {
-          flux += Math.max(0, frequencyData[index] - previousSpectrum[index]) / 255
-        }
+        const flux = fluxPrefix[endBin] - fluxPrefix[startBin]
         return flux / Math.max(1, endBin - startBin)
       }
 
       const kickFlux = positiveFlux(35, 210)
       const snareFlux = positiveFlux(700, 6200)
       const drumFlux = positiveFlux(250, 12000)
-      const fullMusicFlux = positiveFlux(35, 14000)
+      const fullMusicFlux = positiveFlux(25, 16000)
       previousSpectrum.set(frequencyData)
 
       const kickBaseline = kickHistory.length > 0
@@ -272,6 +279,14 @@ export function StemWaveform({
       bassBodyEnvelope = bassBodyTarget > bassBodyEnvelope
         ? bassBodyEnvelope * 0.42 + bassBodyTarget * 0.58
         : bassBodyEnvelope * 0.92 + bassBodyTarget * 0.08
+      const harmonicBodyTarget = response === "music" ? adaptiveLevel(harmonicRange, harmonicEnergy) : 0
+      harmonicBodyEnvelope = harmonicBodyTarget > harmonicBodyEnvelope
+        ? harmonicBodyEnvelope * 0.58 + harmonicBodyTarget * 0.42
+        : harmonicBodyEnvelope * 0.94 + harmonicBodyTarget * 0.06
+      const detailBodyTarget = response === "music" ? adaptiveLevel(detailRange, detailEnergy) : 0
+      detailBodyEnvelope = detailBodyTarget > detailBodyEnvelope
+        ? detailBodyEnvelope * 0.72 + detailBodyTarget * 0.28
+        : detailBodyEnvelope * 0.96 + detailBodyTarget * 0.04
       const musicBodyTarget = response === "music" ? adaptiveLevel(musicRange, fullMusicEnergy) : 0
       musicBodyEnvelope = musicBodyTarget > musicBodyEnvelope
         ? musicBodyEnvelope * 0.75 + musicBodyTarget * 0.25
@@ -306,11 +321,16 @@ export function StemWaveform({
         const snareFocus = Math.exp(-distanceFromPlayhead / 4)
         const drumFocus = Math.exp(-distanceFromPlayhead / 3)
         const musicFocus = Math.exp(-distanceFromPlayhead / 5)
+        const bassContour = 1 - mirroredSpectrumPosition
+        const harmonicContour = 1 - Math.abs(mirroredSpectrumPosition - 0.48) * 1.35
+        const detailContour = mirroredSpectrumPosition
         const scale = response === "music"
           ? clamp(
               0.64
-                + bassBodyEnvelope * 0.14
-                + musicBodyEnvelope * 0.12
+                + bassBodyEnvelope * (0.06 + bassContour * 0.07)
+                + harmonicBodyEnvelope * (0.05 + harmonicContour * 0.07)
+                + detailBodyEnvelope * (0.02 + detailContour * 0.045)
+                + musicBodyEnvelope * 0.09
                 + kickPulse * (0.08 + kickFocus * 1.15)
                 + snarePulse * (0.04 + snareFocus * 0.62)
                 + drumPulse * (0.03 + drumFocus * 0.42)
@@ -410,6 +430,7 @@ export function StemWaveform({
         <span>{formatAudioTime(currentTime)}</span>
         <span>{formatAudioTime(duration)}</span>
       </div>
+
     </div>
   )
 }
