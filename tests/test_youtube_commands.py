@@ -29,6 +29,9 @@ class YouTubeCommandTests(unittest.TestCase):
 
         self.assertNotIn("--js-runtimes", command)
         self.assertNotIn("--remote-components", command)
+        self.assertIn("--ignore-config", command)
+        self.assertIn("--encoding", command)
+        self.assertLess(command.index("--ignore-config"), command.index(url))
 
     def test_yt_dlp_failure_summary_preserves_reason_but_not_url(self):
         url = "https://example.com/private-video"

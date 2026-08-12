@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom"
-import { DownloadSimple, Image, Waveform } from "@phosphor-icons/react"
+import { Cpu, DownloadSimple, Image, Waveform } from "@phosphor-icons/react"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { cn } from "@/lib/utils"
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/downloader", label: "Media Downloader", icon: DownloadSimple },
   { to: "/audio-separator", label: "Audio Separator", icon: Waveform },
   { to: "/background-remover", label: "Background Remover", icon: Image },
+  { to: "/compute", label: "MediaKeepa Compute", shortLabel: "Compute", icon: Cpu },
 ]
 
 export function AppHeader() {
@@ -21,7 +22,7 @@ export function AppHeader() {
 
       <div className="flex min-w-0 items-center gap-2">
         <nav className="flex items-center gap-1 rounded-full border border-border bg-card p-1 shadow-sm" aria-label="MediaKeepa tools">
-          {navItems.map(({ to, label, icon: Icon }) => (
+          {navItems.map(({ to, label, shortLabel, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -35,7 +36,7 @@ export function AppHeader() {
               aria-label={label}
             >
               <Icon size={16} weight="bold" />
-              <span className="hidden whitespace-nowrap lg:inline">{label}</span>
+              <span className="hidden whitespace-nowrap lg:inline">{shortLabel || label}</span>
             </NavLink>
           ))}
         </nav>

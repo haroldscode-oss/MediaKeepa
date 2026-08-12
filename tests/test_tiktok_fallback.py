@@ -2,6 +2,7 @@ import atexit
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 
 _test_downloads = tempfile.TemporaryDirectory(prefix="mediakeepa-tiktok-test-")
@@ -12,6 +13,7 @@ from server import (  # noqa: E402
     build_tiktok_player_metadata,
     choose_tiktok_format,
     extract_tiktok_post_id,
+    fetch_tiktok_player_metadata,
     is_tiktok_url,
     validate_tiktok_media_url,
 )
@@ -103,6 +105,31 @@ class TikTokFallbackTests(unittest.TestCase):
         # 1024-pixel profile is the best stream below the requested 1080 ceiling.
         self.assertEqual(selected["format_id"], "720p")
         self.assertEqual(selected["vcodec"], "h264")
+
+    @patch("server.requests.get")
+    def test_player_metadata_uses_current_embed_app_id(self, mock_get):
+        response = Mock(status_code=200)
+        response.json.return_value = {"items": [self.item]}
+        mock_get.return_value = response
+
+        metadata = fetch_tiktok_player_metadata(self.url)
+
+        self.assertEqual(metadata["title"], "The GOAT antagonist")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["aid"], "1988")
+
+    @patch("server.TIKTOK_PLAYER_APP_IDS", ("1988", "1459"))
+    @patch("server.requests.get")
+    def test_player_metadata_falls_back_after_rate_limit(self, mock_get):
+        limited = Mock(status_code=429)
+        successful = Mock(status_code=200)
+        successful.json.return_value = {"items": [self.item]}
+        mock_get.side_effect = [limited, successful]
+
+        metadata = fetch_tiktok_player_metadata(self.url)
+
+        self.assertEqual(metadata["id"], "7542284447299669261")
+        self.assertEqual(mock_get.call_count, 2)
+        self.assertEqual(mock_get.call_args_list[1].kwargs["params"]["aid"], "1459")
 
 
 if __name__ == "__main__":

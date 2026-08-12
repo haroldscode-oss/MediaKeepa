@@ -15,9 +15,9 @@ MODEL_DIR = "/models"
 VOCAL_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "aac", "ogg"}
 GPU_TYPE = os.environ.get("MEDIAKEEPA_AUDIO_GPU", "L40S")
-MIN_CONTAINERS = int(os.environ.get("MEDIAKEEPA_AUDIO_MIN_CONTAINERS", "1"))
+MIN_CONTAINERS = int(os.environ.get("MEDIAKEEPA_AUDIO_MIN_CONTAINERS", "0"))
 BUFFER_CONTAINERS = int(os.environ.get("MEDIAKEEPA_AUDIO_BUFFER_CONTAINERS", "0"))
-SCALEDOWN_WINDOW = int(os.environ.get("MEDIAKEEPA_AUDIO_SCALEDOWN_WINDOW", "1200"))
+SCALEDOWN_WINDOW = int(os.environ.get("MEDIAKEEPA_AUDIO_SCALEDOWN_WINDOW", "60"))
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -103,7 +103,7 @@ def _find_output(
     retries=modal.Retries(max_retries=1, backoff_coefficient=2.0),
 )
 class AudioSeparator:
-    """Always-ready separator with weights loaded before jobs are routed."""
+    """Separator that loads weights when its on-demand container starts."""
 
     @modal.enter()
     def initialize(self):

@@ -23,9 +23,9 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_DIMENSION = 16000
 MAX_PIXELS = 64_000_000
 GPU_TYPE = os.environ.get("MEDIAKEEPA_BACKGROUND_GPU", "L4")
-MIN_CONTAINERS = int(os.environ.get("MEDIAKEEPA_BACKGROUND_MIN_CONTAINERS", "1"))
+MIN_CONTAINERS = int(os.environ.get("MEDIAKEEPA_BACKGROUND_MIN_CONTAINERS", "0"))
 BUFFER_CONTAINERS = int(os.environ.get("MEDIAKEEPA_BACKGROUND_BUFFER_CONTAINERS", "0"))
-SCALEDOWN_WINDOW = int(os.environ.get("MEDIAKEEPA_BACKGROUND_SCALEDOWN_WINDOW", "1200"))
+SCALEDOWN_WINDOW = int(os.environ.get("MEDIAKEEPA_BACKGROUND_SCALEDOWN_WINDOW", "60"))
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -124,7 +124,7 @@ def _load_model():
     retries=modal.Retries(max_retries=1, backoff_coefficient=2.0),
 )
 class BackgroundRemover:
-    """Always-ready RMBG-2.0 service with model initialization before routing."""
+    """RMBG-2.0 service that initializes when its on-demand container starts."""
 
     @modal.enter()
     def initialize(self):

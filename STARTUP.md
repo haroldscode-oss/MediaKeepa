@@ -5,7 +5,7 @@
 - Windows PowerShell
 - Python environment at `.venv` with `requirements.txt` installed
 - Node.js only when rebuilding the frontend
-- Authenticated Modal CLI for GPU deployment and invocation
+- Bundled Modal CLI (the Compute setup wizard supplies account credentials privately)
 - Initialized `modal-rotation` submodule
 - `ffmpeg` and `ffprobe` available on `PATH` or as local executables
 
@@ -34,8 +34,10 @@ The launcher starts the Modal-Rotation control plane on loopback port `8765`, st
 Default endpoints:
 
 - Local UI/API: `http://127.0.0.1:8080`
+- MediaKeepa Compute: `http://127.0.0.1:8080/compute/`
 - Health check: `http://127.0.0.1:8080/ping`
-- Modal-Rotation health: `http://127.0.0.1:8765/api/health`
+- Compute health through MediaKeepa: `http://127.0.0.1:8080/compute/api/health`
+- Internal Compute health: `http://127.0.0.1:8765/api/health`
 - Mobile on the same network: `http://<LAN-IP>:8080`
 
 The Windows firewall must allow inbound TCP port `8080` for LAN/mobile access. Port `8765` should remain private and bound to loopback.
@@ -50,24 +52,16 @@ The scripts keep PID and performance-mode state under the git-ignored `.runtime`
 
 ## Select a performance mode
 
-Fast mode is the responsive interactive configuration:
+Use the **Performance** section on `http://127.0.0.1:8080/compute/`. Fast keeps only a recently used Audio worker ready for 10 minutes or Background worker for 5 minutes; Economy uses a 60-second idle window. Both modes scale to zero and always route through connected Compute accounts.
 
-```powershell
-.\set-mediakeepa-performance.ps1 -Mode Fast
-```
+The workers use:
 
-It deploys and warms:
+- an L40S for Audio Separator with BS-RoFormer
+- an L4 for Background Remover with RMBG-2.0
 
-- one L40S Audio Separator container with BS-RoFormer
-- one L4 Background Remover container with RMBG-2.0
+Only the worker that receives a job starts and warms. The selected mode is saved across later application restarts, while routing always remains on the connected Compute pool.
 
-It also sets both interactive backends to direct Modal so Modal-Rotation polling and artifact relaying are not on the user-facing critical path. The selected mode is saved and restored on later application restarts.
-
-Economy mode permits scale-to-zero operation and restores automatic routing:
-
-```powershell
-.\set-mediakeepa-performance.ps1 -Mode Economy
-```
+The optional `set-mediakeepa-performance.ps1` helper calls the same Compute API. It is not required for normal use.
 
 ## Build the frontend
 
@@ -85,11 +79,19 @@ Restart MediaKeepa so the latest bundle is served.
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/ping
+Invoke-RestMethod http://127.0.0.1:8080/compute/api/health
 Invoke-RestMethod http://127.0.0.1:8765/api/health
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
 The detailed expected state is recorded in [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md).
+Account pooling, connection, removal, deployment, and recovery are documented in [docs/MEDIAKEEPA_COMPUTE.md](docs/MEDIAKEEPA_COMPUTE.md).
+
+### Add or remove a Modal account
+
+Open `http://127.0.0.1:8080/compute/`. Select **Add Modal account**, paste the complete `modal token set ...` command and an `hf_...` Hugging Face token, then select **Set up account**. Leave the label blank to use Modal's verified name. MediaKeepa verifies the account, creates the Background Remover secret, deploys both workers in the selected mode, prepares the gated model, and links both tools without terminal commands or separate tool setup. Repeat the same form to add more accounts to the shared pool.
+
+For Economy/Compute jobs, MediaKeepa routes to the ready account with the highest known remaining credit. Use **Remove** on one account to remove its local encrypted credential, disable only its routing targets, and clear its local routed history and cached artifacts. Other accounts remain active. Removal does not revoke the token or delete anything in Modal.
 
 ## Logs
 
@@ -110,7 +112,7 @@ Use `netstat -ano | Select-String ':8080'` to find the listener. Prefer `stop-me
 
 ### GPU request has cold-start latency
 
-Check `.runtime/performance-mode`. Run `set-mediakeepa-performance.ps1 -Mode Fast` to redeploy warm workers and persist direct routing. Fast mode reserves continuous GPU capacity.
+Check the Performance section on `/compute/`. Startup always restores shared Compute-pool routing, so a removed or disabled local Modal profile cannot receive MediaKeepa jobs.
 
 ### YouTube authentication error
 

@@ -34,6 +34,8 @@ for stream in (sys.stdout, sys.stderr):
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_FOLDER = ROOT_DIR / "spark-template" / "dist"
 DEFAULT_PORT = int(os.environ.get("PORT", "8080"))
+COMPUTE_CONTROL_PLANE_URL = os.environ.get("MEDIAKEEPA_COMPUTE_URL", "http://127.0.0.1:8765").rstrip("/")
+PERFORMANCE_MODE_PATH = ROOT_DIR / ".runtime" / "performance-mode"
 
 # Detect yt-dlp command based on platform
 import platform
@@ -143,6 +145,7 @@ YOUTUBE_REMOTE_COMPONENT = os.environ.get(
     "YT_DLP_REMOTE_COMPONENT",
     "ejs:github",
 ).strip()
+YTDLP_DEFAULT_ARGS = (("--ignore-config",), ("--encoding", "utf-8"))
 
 
 def resolve_quality_height(value):
@@ -227,6 +230,14 @@ def inject_youtube_cookies(command, url=None):
     if not isinstance(command, list):
         command = list(command)
 
+    # Do not let a machine-wide yt-dlp.conf silently change MediaKeepa's
+    # behavior between launches. Force UTF-8 so metadata and progress output
+    # are decoded consistently on Windows as well.
+    for option_args in YTDLP_DEFAULT_ARGS:
+        option = option_args[0]
+        if option not in command:
+            command[1:1] = list(option_args)
+
     if url and is_youtube_url(url):
         runtime_args = []
         if YOUTUBE_JS_RUNTIME and "--js-runtimes" not in command:
@@ -306,7 +317,11 @@ def run_yt_dlp_with_clients(base_args, url, preferred_clients=None, log_prefix="
         client_label = client or "default"
         print(f"▶️ {log_prefix}: trying client '{client_label}' for {url[:50]}...")
 
-        result = subprocess.run(command, **kwargs)
+        run_kwargs = dict(kwargs)
+        if run_kwargs.get("text"):
+            run_kwargs.setdefault("encoding", "utf-8")
+            run_kwargs.setdefault("errors", "replace")
+        result = subprocess.run(command, **run_kwargs)
         last_result = result
         last_client = client
 
@@ -340,10 +355,19 @@ TIKTOK_MEDIA_HOSTS = (
     "tiktokv.us",
 )
 TIKTOK_PLAYER_API = "https://www.tiktok.com/player/api/v1/items"
+TIKTOK_PLAYER_APP_IDS = tuple(
+    app_id.strip()
+    for app_id in os.environ.get("TIKTOK_PLAYER_APP_IDS", "1988,1459").split(",")
+    if app_id.strip()
+)
 TIKTOK_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 )
+
+
+class TikTokPlayerUnavailable(RuntimeError):
+    """Raised when TikTok's public player cannot currently return a post."""
 
 
 def hostname_matches(hostname, allowed_suffixes):
@@ -562,23 +586,54 @@ def fetch_tiktok_player_metadata(url):
     """Fetch public post metadata through TikTok's official embed-player API."""
     post_id = resolve_tiktok_post_id(url)
     referer = f"https://www.tiktok.com/player/v1/{post_id}"
-    response = requests.get(
-        TIKTOK_PLAYER_API,
-        params={
-            "item_ids": post_id,
-            "language": "en-US",
-            "aid": "1459",
-            "data_source": "web_core",
-        },
-        headers={"User-Agent": TIKTOK_USER_AGENT, "Referer": referer},
-        timeout=20,
+    headers = {
+        "User-Agent": TIKTOK_USER_AGENT,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.tiktok.com",
+        "Referer": referer,
+    }
+    last_status = None
+    saw_rate_limit = False
+
+    # TikTok occasionally retires an embed-player application ID without
+    # notice. Try the current player ID first and retain the older ID only as a
+    # bounded compatibility fallback. This also keeps a single 429 from being
+    # surfaced as an opaque Flask 500 response.
+    for app_id in TIKTOK_PLAYER_APP_IDS or ("1988",):
+        try:
+            response = requests.get(
+                TIKTOK_PLAYER_API,
+                params={
+                    "item_ids": post_id,
+                    "language": "en-US",
+                    "aid": app_id,
+                    "data_source": "web_core",
+                },
+                headers=headers,
+                timeout=20,
+            )
+            last_status = response.status_code
+            saw_rate_limit = saw_rate_limit or response.status_code == 429
+            if response.status_code in {403, 408, 425, 429} or response.status_code >= 500:
+                print(f"TikTok player app {app_id} returned HTTP {response.status_code}; trying fallback")
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            items = payload.get("items") or []
+            if not items:
+                continue
+            return build_tiktok_player_metadata(items[0], url, post_id)
+        except (requests.RequestException, ValueError, TypeError, RuntimeError) as exc:
+            print(f"TikTok player app {app_id} failed: {type(exc).__name__}")
+
+    if saw_rate_limit or last_status == 429:
+        raise TikTokPlayerUnavailable(
+            "TikTok temporarily rate-limited its public player. Please wait a minute and try again."
+        )
+    raise TikTokPlayerUnavailable(
+        "TikTok's public player is temporarily unavailable. Please try again shortly."
     )
-    response.raise_for_status()
-    payload = response.json()
-    items = payload.get("items") or []
-    if not items:
-        raise RuntimeError("TikTok's player did not return this post")
-    return build_tiktok_player_metadata(items[0], url, post_id)
 
 
 def choose_tiktok_format(video_data, quality=None):
@@ -1572,6 +1627,21 @@ def run_background_removal(job_id, input_path, original_name):
         except OSError as exc:
             print(f"Could not clean Background Remover upload {input_path}: {exc}")
 
+
+def activate_compute_pool_routing():
+    """Route both interactive tools through connected Compute accounts immediately."""
+    global AUDIO_SEPARATOR_BACKEND, BACKGROUND_REMOVER_BACKEND
+
+    AUDIO_SEPARATOR_BACKEND = "control-plane"
+    BACKGROUND_REMOVER_BACKEND = "control-plane"
+
+    # A previous Fast-mode request may have cached handles tied to a locally
+    # active Modal profile. Compute routing must never reuse those handles.
+    get_modal_audio_separator_service.cache_clear()
+    get_legacy_modal_audio_separator_function.cache_clear()
+    get_modal_background_remover_service.cache_clear()
+    get_legacy_modal_background_remover_function.cache_clear()
+
 # Clean up any leftover files from previous runs on startup (always run this)
 try:
     if os.path.exists(temp_downloads_path):
@@ -2002,6 +2072,46 @@ def perform_download(session_id, url, format_type, quality, output_template, bas
                 print(f"🗑️  Cleaned up error progress data for session: {session_id}")
         
         threading.Thread(target=cleanup_error_progress, daemon=True).start()
+
+@app.route("/compute/api/<path:compute_path>", methods=["GET", "POST"])
+@limiter.exempt
+def serve_compute(compute_path):
+    """Proxy MediaKeepa Compute's local API through the main app's origin.
+
+    The upstream is fixed to the local control plane; arbitrary proxy targets,
+    browser Origin headers, cookies, and authorization headers are never
+    forwarded.
+    """
+    upstream_path = f"/api/{compute_path}"
+    try:
+        upstream = requests.request(
+            method=request.method,
+            url=f"{COMPUTE_CONTROL_PLANE_URL}{upstream_path}",
+            params=request.args,
+            data=request.get_data(cache=False),
+            headers={"Content-Type": request.content_type} if request.content_type else {},
+            timeout=3750,
+        )
+    except requests.RequestException as exc:
+        message = "MediaKeepa Compute is not running. Restart MediaKeepa and try again."
+        print(f"Compute proxy unavailable: {type(exc).__name__}: {exc}")
+        return jsonify({"error": message}), 503
+
+    if (
+        request.method == "POST"
+        and compute_path == "accounts/provision"
+        and 200 <= upstream.status_code < 300
+    ):
+        activate_compute_pool_routing()
+
+    response = Response(upstream.content, status=upstream.status_code)
+    for header in ("Content-Type", "Content-Disposition"):
+        if header in upstream.headers:
+            response.headers[header] = upstream.headers[header]
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 
 @app.route("/assets/<path:filename>")
 def serve_frontend_asset(filename):
@@ -2500,20 +2610,36 @@ def video_info():
         print(f"URL: {url}")
 
         used_client = None
-        try:
-            result, used_client = run_yt_dlp_with_clients(
-                base_command,
-                url,
-                log_prefix="video info",
-                capture_output=True,
-                text=True,
-                timeout=20  # Increased timeout for YouTube
-            )
-        except RuntimeError as yt_dlp_error:
-            if not is_tiktok_url(url):
+        result = None
+        video_data = None
+        tiktok_player_error = None
+
+        # TikTok's public webpage challenge changes frequently and can fail in
+        # an otherwise up-to-date yt-dlp build. Its embed player is both faster
+        # and the same source used by MediaKeepa's direct download path, so use
+        # it first and keep yt-dlp as the compatibility fallback.
+        if is_tiktok_url(url):
+            try:
+                video_data = fetch_tiktok_player_metadata(url)
+                print("TikTok player metadata succeeded")
+            except TikTokPlayerUnavailable as exc:
+                tiktok_player_error = exc
+                print(f"TikTok player metadata unavailable; trying yt-dlp: {exc}")
+
+        if video_data is None:
+            try:
+                result, used_client = run_yt_dlp_with_clients(
+                    base_command,
+                    url,
+                    log_prefix="video info",
+                    capture_output=True,
+                    text=True,
+                    timeout=20  # Increased timeout for YouTube
+                )
+            except RuntimeError as yt_dlp_error:
+                if tiktok_player_error is not None:
+                    raise tiktok_player_error from yt_dlp_error
                 raise
-            print(f"TikTok yt-dlp extraction failed; using official player fallback: {yt_dlp_error}")
-            result = None
         
         if result is not None and result.returncode != 0:
             print(f"ERROR: yt-dlp failed: {result.stderr}")
@@ -2524,13 +2650,10 @@ def video_info():
         if used_client:
             print(f"🎯 Using YouTube client: {used_client}")
         
-        # Parse JSON output
-        import json
-        video_data = (
-            json.loads(result.stdout)
-            if result is not None
-            else fetch_tiktok_player_metadata(url)
-        )
+        # Parse JSON output when yt-dlp supplied the metadata. TikTok player
+        # metadata is already normalized to the same shape.
+        if video_data is None:
+            video_data = json.loads(result.stdout)
         
         # Extract thumbnail URL - USE DIRECT URL FOR SPEED (except Instagram)
         thumbnail_url = video_data.get("thumbnail", "")
@@ -2849,6 +2972,13 @@ def video_info():
             "status": "error",
             "message": "Request timed out"
         }), 500
+    except TikTokPlayerUnavailable as e:
+        print(f"TikTok player unavailable: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "retryable": True,
+        }), 503
     except Exception as e:
         print(f"ERROR: {type(e).__name__}: {str(e)}")
         return jsonify({

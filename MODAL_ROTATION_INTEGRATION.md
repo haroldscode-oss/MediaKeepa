@@ -14,13 +14,12 @@ MediaKeepa can submit the `mediakeepa / separate-audio` logical workload to Moda
    .\dashboard.cmd
    ```
 
-2. Connect each authorized Modal workspace in the dashboard at `http://localhost:8765`.
-3. Register an application named `MediaKeepa` with slug `mediakeepa` and a workload named `Separate audio` with slug `separate-audio`.
-4. For every target workspace, bind the workload to app `mediakeepa-audio-separator`, function `separate_audio`, and environment `main`. The complete example payload is in `modal-rotation/examples/mediakeepa_registration.example.json`.
-5. Configure MediaKeepa:
+2. Start MediaKeepa and open `http://127.0.0.1:8080/compute`.
+3. Use **Add Modal account** with the workspace token command and a Hugging Face access token. MediaKeepa creates the required secret, deploys both workers in the selected Economy or Fast mode, prepares the gated model, and registers their fixed app/function bindings.
+4. Configure MediaKeepa:
 
    ```text
-   AUDIO_SEPARATOR_BACKEND=auto
+   AUDIO_SEPARATOR_BACKEND=control-plane
    AUDIO_SEPARATOR_CONTROL_PLANE_URL=http://localhost:8765
    AUDIO_SEPARATOR_CONTROL_PLANE_APPLICATION=mediakeepa
    AUDIO_SEPARATOR_CONTROL_PLANE_WORKLOAD=separate-audio
@@ -28,19 +27,19 @@ MediaKeepa can submit the `mediakeepa / separate-audio` logical workload to Moda
    AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS=1800
    ```
 
-Use `AUDIO_SEPARATOR_BACKEND=control-plane` only when a control-plane failure should fail the MediaKeepa job instead of falling back to direct Modal or local Demucs.
+The MediaKeepa launcher sets both interactive tools to `control-plane` so removed or disabled local Modal profiles cannot receive jobs.
 
 ## Execution order
 
-In `auto` mode:
+For MediaKeepa Compute jobs:
 
 1. Modal-Rotation selects the highest-known-balance eligible workspace.
-2. If the control plane fails its health check before submission, MediaKeepa tries its existing direct Modal configuration.
-3. If direct Modal is unavailable, MediaKeepa runs the local Demucs fallback.
+2. The run is submitted only to connected, healthy account targets.
+3. Failures are surfaced instead of silently using a different local Modal profile.
 
 After submission may have begun, MediaKeepa never automatically resubmits through the direct backend. A timeout, detached run, failed run, or artifact-download error is surfaced for inspection because retrying could duplicate GPU work.
 
-Modal-Rotation does not redeploy `modal_audio_separator.py`; the Modal function must already exist in every registered target workspace.
+The MediaKeepa Compute provisioning endpoint performs deployment only during the explicit **Set up account** action. The scheduler never deploys or changes a workspace while routing an ordinary job.
 
 ## Current security and deployment boundary
 

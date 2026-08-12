@@ -1,10 +1,11 @@
 # MediaKeepa
 
-MediaKeepa is a responsive web application for downloading and processing media from one interface. The current build includes three operational tools:
+MediaKeepa is a responsive web application for downloading, processing, and operating media compute from one interface. The current build includes four operational tools:
 
 - **Media Downloader** — inspect a supported URL and download video, audio, images, or captions with yt-dlp and FFmpeg.
 - **Audio Separator** — separate an uploaded audio file into lossless Vocals and Music WAV stems with BS-RoFormer on Modal.
 - **Background Remover** — remove an image background with Bria RMBG-2.0 on Modal and download a full-resolution transparent PNG.
+- **MediaKeepa Compute** — connect Modal workspaces, monitor usage and apps, and manage routed workload bindings from a dedicated MediaKeepa page.
 
 The React interface and Flask API share one origin. It works on desktop and mobile browsers, supports light and dark themes, and is served locally at `http://127.0.0.1:8080` by default.
 
@@ -20,7 +21,8 @@ git submodule update --init modal-rotation
 The launcher starts:
 
 - MediaKeepa UI and API: `http://127.0.0.1:8080`
-- Modal-Rotation control plane: `http://127.0.0.1:8765`
+- MediaKeepa Compute page: `http://127.0.0.1:8080/compute/`
+- Internal Compute control plane: `http://127.0.0.1:8765`
 - LAN/mobile access: the `http://<LAN-IP>:8080` address printed by the launcher
 
 Stop both local services with:
@@ -31,21 +33,7 @@ Stop both local services with:
 
 ## Performance modes
 
-The currently recommended interactive configuration is Fast mode:
-
-```powershell
-.\set-mediakeepa-performance.ps1 -Mode Fast
-```
-
-Fast mode keeps the quality-first models loaded in warm containers, uses an L40S for Audio Separator and an L4 for Background Remover, and sends interactive requests directly to the preloaded Modal classes. It preserves the selected mode across ordinary application restarts in `.runtime/performance-mode`.
-
-To allow the workers to scale to zero and use the multi-workspace routing/fallback chain, switch to Economy mode:
-
-```powershell
-.\set-mediakeepa-performance.ps1 -Mode Economy
-```
-
-Fast mode prioritizes latency and reserves approximately `$2.75/hour` of GPU capacity at the rates used when this configuration was created, before CPU and memory. Economy mode reduces idle cost but reintroduces cold-start and routing latency.
+Choose Economy or Fast directly on the MediaKeepa Compute page. Both use the multi-account Compute pool, keep `min_containers=0`, and scale fully to zero. Economy uses a 60-second idle window. Fast keeps only a recently used Audio Separator worker ready for 10 minutes or Background Remover worker for 5 minutes, then turns it off.
 
 ## Quality configuration
 
@@ -98,6 +86,7 @@ MediaKeepa adds the configured cookies only to YouTube requests. TikTok also has
 
 - [Current operational state](docs/CURRENT_STATE.md)
 - [Startup and operations](STARTUP.md)
+- [MediaKeepa Compute account guide](docs/MEDIAKEEPA_COMPUTE.md)
 - [Modal-Rotation integration](MODAL_ROTATION_INTEGRATION.md)
 - [Deployment guide](DEPLOYMENT_GUIDE.md)
 - [Security policy](SECURITY.md)
