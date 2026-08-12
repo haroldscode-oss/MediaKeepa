@@ -22,6 +22,10 @@ HUGGINGFACE_SECRET_NAME = "MediaKeepa_backgroundremover"
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_DIMENSION = 16000
 MAX_PIXELS = 64_000_000
+GPU_TYPE = os.environ.get("MEDIAKEEPA_BACKGROUND_GPU", "L4")
+MIN_CONTAINERS = int(os.environ.get("MEDIAKEEPA_BACKGROUND_MIN_CONTAINERS", "1"))
+BUFFER_CONTAINERS = int(os.environ.get("MEDIAKEEPA_BACKGROUND_BUFFER_CONTAINERS", "0"))
+SCALEDOWN_WINDOW = int(os.environ.get("MEDIAKEEPA_BACKGROUND_SCALEDOWN_WINDOW", "1200"))
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -106,48 +110,75 @@ def _load_model():
     return _model, _transform
 
 
-@app.function(
+@app.cls(
     image=image,
-    gpu="L4",
+    gpu=GPU_TYPE,
     volumes={MODEL_DIR: model_volume},
     secrets=[huggingface_secret],
     timeout=5 * 60,
     startup_timeout=20 * 60,
-    scaledown_window=5 * 60,
+    min_containers=MIN_CONTAINERS,
+    buffer_containers=BUFFER_CONTAINERS,
+    scaledown_window=SCALEDOWN_WINDOW,
     max_containers=3,
     retries=modal.Retries(max_retries=1, backoff_coefficient=2.0),
 )
+class BackgroundRemover:
+    """Always-ready RMBG-2.0 service with model initialization before routing."""
+
+    @modal.enter()
+    def initialize(self):
+        import torch
+
+        self.model, self.transform = _load_model()
+
+        # Materialize CUDA kernels during warm-up rather than on a user's image.
+        sample = torch.zeros((1, 3, 1024, 1024), device="cuda")
+        with torch.inference_mode():
+            self.model(sample)
+        torch.cuda.synchronize()
+
+    @modal.method()
+    def remove(self, image_bytes: bytes) -> bytes:
+        """Return a full-resolution transparent PNG for one uploaded image."""
+        if not image_bytes:
+            raise ValueError("The uploaded image is empty.")
+        if len(image_bytes) > MAX_IMAGE_BYTES:
+            raise ValueError("Images must be 20 MB or smaller.")
+
+        import torch
+        from PIL import Image, ImageOps, UnidentifiedImageError
+        from torchvision import transforms
+
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as source:
+                source.load()
+                original = ImageOps.exif_transpose(source).convert("RGB")
+        except (UnidentifiedImageError, OSError) as exc:
+            raise ValueError("Choose a valid JPG, PNG, or WebP image.") from exc
+
+        if original.width > MAX_DIMENSION or original.height > MAX_DIMENSION:
+            raise ValueError("Images must be 16,000 pixels or smaller on each side.")
+        if original.width * original.height > MAX_PIXELS:
+            raise ValueError("Images must contain 64 megapixels or fewer.")
+
+        input_tensor = self.transform(original).unsqueeze(0).to("cuda")
+        with torch.inference_mode():
+            prediction = self.model(input_tensor)[-1].sigmoid().cpu()[0].squeeze()
+
+        mask = transforms.ToPILImage()(prediction).resize(original.size, Image.Resampling.LANCZOS)
+        result = original.convert("RGBA")
+        result.putalpha(mask)
+        output = io.BytesIO()
+        result.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+
+
+@app.function(
+    timeout=6 * 60,
+    min_containers=MIN_CONTAINERS,
+    scaledown_window=SCALEDOWN_WINDOW,
+)
 def remove_background(image_bytes: bytes) -> bytes:
-    """Return a full-resolution transparent PNG for one uploaded image."""
-    if not image_bytes:
-        raise ValueError("The uploaded image is empty.")
-    if len(image_bytes) > MAX_IMAGE_BYTES:
-        raise ValueError("Images must be 20 MB or smaller.")
-
-    import torch
-    from PIL import Image, ImageOps, UnidentifiedImageError
-    from torchvision import transforms
-
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as source:
-            source.load()
-            original = ImageOps.exif_transpose(source).convert("RGB")
-    except (UnidentifiedImageError, OSError) as exc:
-        raise ValueError("Choose a valid JPG, PNG, or WebP image.") from exc
-
-    if original.width > MAX_DIMENSION or original.height > MAX_DIMENSION:
-        raise ValueError("Images must be 16,000 pixels or smaller on each side.")
-    if original.width * original.height > MAX_PIXELS:
-        raise ValueError("Images must contain 64 megapixels or fewer.")
-
-    model, transform = _load_model()
-    input_tensor = transform(original).unsqueeze(0).to("cuda")
-    with torch.inference_mode():
-        prediction = model(input_tensor)[-1].sigmoid().cpu()[0].squeeze()
-
-    mask = transforms.ToPILImage()(prediction).resize(original.size, Image.Resampling.LANCZOS)
-    result = original.convert("RGBA")
-    result.putalpha(mask)
-    output = io.BytesIO()
-    result.save(output, format="PNG", optimize=True)
-    return output.getvalue()
+    """Compatibility entrypoint for existing Modal-Rotation registrations."""
+    return BackgroundRemover().remove.remote(image_bytes)

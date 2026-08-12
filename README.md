@@ -10,6 +10,8 @@ MediaKeepa can also route separation through the bundled `modal-rotation` contro
 
 The image-only **Background Remover** accepts JPG, PNG, and WebP uploads and returns a full-resolution transparent PNG using Bria RMBG-2.0. For self-hosting, accept the model terms on Hugging Face, create a Modal secret named `MediaKeepa_backgroundremover` containing `HF_TOKEN`, and deploy `modal_background_remover.py`. Run `modal run modal_background_remover.py::download_weights` once to prefetch the gated weights into the persistent `mediakeepa-background-remover` Modal volume; normal requests also populate that cache automatically if needed. The self-hosted weights are non-commercial unless you have a separate Bria agreement.
 
+For lowest latency, run `.\set-mediakeepa-performance.ps1 -Mode Fast`. Fast mode deploys class-based workers that load their models before accepting traffic, keeps one Audio Separator L40S and one Background Remover L4 container warm, and retains existing function entrypoints for Modal-Rotation compatibility. This prioritizes responsiveness but reserves approximately `$2.75/hour` in GPUs at current Modal rates, before CPU and memory. Run `.\set-mediakeepa-performance.ps1 -Mode Economy` to return both workers to scale-to-zero L4 operation.
+
 ## 🚀 Quick Start
 
 ### Start MediaKeepa

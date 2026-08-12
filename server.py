@@ -919,8 +919,8 @@ temp_downloads_path = os.environ.get(
 if not os.path.exists(temp_downloads_path):
     os.makedirs(temp_downloads_path)
 
-# Audio Separator configuration. The model is loaded lazily so ordinary downloader
-# requests stay fast and the first separator request owns the one-time model load.
+# Audio Separator configuration. The Modal service preloads its model before it
+# accepts traffic; only the local fallback keeps its historical lazy loading.
 AUDIO_SEPARATOR_MAX_BYTES = 50 * 1024 * 1024
 AUDIO_SEPARATOR_ALLOWED_EXTENSIONS = {"mp3", "wav", "flac", "m4a", "aac", "ogg"}
 AUDIO_SEPARATOR_MODEL = os.environ.get("AUDIO_SEPARATOR_MODEL", "htdemucs_ft.yaml")
@@ -934,6 +934,14 @@ AUDIO_SEPARATOR_MODAL_APP = os.environ.get(
 AUDIO_SEPARATOR_MODAL_FUNCTION = os.environ.get(
     "AUDIO_SEPARATOR_MODAL_FUNCTION",
     "separate_audio",
+)
+AUDIO_SEPARATOR_MODAL_CLASS = os.environ.get(
+    "AUDIO_SEPARATOR_MODAL_CLASS",
+    "AudioSeparator",
+)
+AUDIO_SEPARATOR_MODAL_METHOD = os.environ.get(
+    "AUDIO_SEPARATOR_MODAL_METHOD",
+    "separate",
 )
 AUDIO_SEPARATOR_CONTROL_PLANE_URL = os.environ.get(
     "AUDIO_SEPARATOR_CONTROL_PLANE_URL",
@@ -1016,7 +1024,18 @@ class ControlPlaneUnavailableBeforeSubmission(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def get_modal_audio_separator_function():
+def get_modal_audio_separator_service():
+    import modal
+
+    service_class = modal.Cls.from_name(
+        AUDIO_SEPARATOR_MODAL_APP,
+        AUDIO_SEPARATOR_MODAL_CLASS,
+    )
+    return service_class()
+
+
+@lru_cache(maxsize=1)
+def get_legacy_modal_audio_separator_function():
     import modal
 
     return modal.Function.from_name(
@@ -1103,8 +1122,14 @@ def run_modal_audio_separation(job_id, input_path):
     with open(input_path, "rb") as audio_file:
         audio_bytes = audio_file.read()
 
-    remote_function = get_modal_audio_separator_function()
-    archive_bytes = remote_function.remote(audio_bytes, extension)
+    import modal
+
+    try:
+        service = get_modal_audio_separator_service()
+        remote_method = getattr(service, AUDIO_SEPARATOR_MODAL_METHOD)
+        archive_bytes = remote_method.remote(audio_bytes, extension)
+    except modal.exception.NotFoundError:
+        archive_bytes = get_legacy_modal_audio_separator_function().remote(audio_bytes, extension)
     return extract_modal_stem_archive(job_id, archive_bytes)
 
 
@@ -1298,6 +1323,14 @@ BACKGROUND_REMOVER_MODAL_FUNCTION = os.environ.get(
     "BACKGROUND_REMOVER_MODAL_FUNCTION",
     "remove_background",
 ).strip()
+BACKGROUND_REMOVER_MODAL_CLASS = os.environ.get(
+    "BACKGROUND_REMOVER_MODAL_CLASS",
+    "BackgroundRemover",
+).strip()
+BACKGROUND_REMOVER_MODAL_METHOD = os.environ.get(
+    "BACKGROUND_REMOVER_MODAL_METHOD",
+    "remove",
+).strip()
 BACKGROUND_REMOVER_CONTROL_PLANE_URL = os.environ.get(
     "BACKGROUND_REMOVER_CONTROL_PLANE_URL",
     "",
@@ -1372,7 +1405,18 @@ def validate_background_remover_result(image_bytes):
 
 
 @lru_cache(maxsize=1)
-def get_modal_background_remover_function():
+def get_modal_background_remover_service():
+    import modal
+
+    service_class = modal.Cls.from_name(
+        BACKGROUND_REMOVER_MODAL_APP,
+        BACKGROUND_REMOVER_MODAL_CLASS,
+    )
+    return service_class()
+
+
+@lru_cache(maxsize=1)
+def get_legacy_modal_background_remover_function():
     import modal
 
     return modal.Function.from_name(
@@ -1398,8 +1442,14 @@ def get_background_control_plane_client():
 
 
 def run_modal_background_removal(image_bytes):
-    remote_function = get_modal_background_remover_function()
-    return remote_function.remote(image_bytes)
+    import modal
+
+    try:
+        service = get_modal_background_remover_service()
+        remote_method = getattr(service, BACKGROUND_REMOVER_MODAL_METHOD)
+        return remote_method.remote(image_bytes)
+    except modal.exception.NotFoundError:
+        return get_legacy_modal_background_remover_function().remote(image_bytes)
 
 
 def run_control_plane_background_removal(image_bytes):
