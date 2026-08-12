@@ -8,7 +8,7 @@ http://127.0.0.1:8080/compute/
 
 ## The simple model
 
-- Select **Add Modal account** once for each account you want MediaKeepa to use.
+- Select **Add Account** once for each Modal account you want MediaKeepa to use.
 - Paste its Modal API token command and your Hugging Face access token in the private local form.
 - MediaKeepa creates the required Modal secret, deploys both GPU workers in the currently selected performance mode, prepares the gated background model, and links both tools automatically.
 - There is no separate Modal connection for each tool.
@@ -24,7 +24,7 @@ Credits are not transferred or combined between Modal workspaces. The accounts f
 1. Sign in to Modal and select the workspace you want to add.
 2. In that workspace's settings, create an API token. Modal displays a command containing `--token-id ak-...` and `--token-secret as-...`.
 3. Start MediaKeepa with `./start-mediakeepa.ps1` and open `/compute/`.
-4. Select **Add Modal account**.
+4. Select **Add Account**.
 5. Paste the complete token command into the Modal token field.
 6. Accept the `briaai/RMBG-2.0` model terms on Hugging Face, create an `hf_...` access token, and paste it into the Hugging Face field.
 7. Optionally add a friendly label. Leaving it blank uses Modal's verified name.
@@ -61,7 +61,7 @@ Credential connection, workload linkage, and worker deployment are separate fact
 - **Connection issue**: Modal could not provide a usable account snapshot.
 - **Link missing**: the fixed workload target is absent or disabled.
 
-The pool-level tool card shows how many accounts are ready. A job can run whenever at least one account is ready for that tool.
+The **Compute pool** shows both tool states for every connected account. A job can run whenever at least one account is ready for that tool.
 
 ## What happens to GPUs
 
@@ -107,15 +107,15 @@ Confirm the command contains an `ak-` token ID and `as-` token secret created in
 
 ### Setup reports a Hugging Face or model error
 
-Confirm that the Hugging Face account behind the submitted token has accepted the `briaai/RMBG-2.0` terms. Then open **Add Modal account** and run setup again with the same Modal account and a valid Hugging Face token. The operation safely updates the existing account.
+Confirm that the Hugging Face account behind the submitted token has accepted the `briaai/RMBG-2.0` terms. Then open **Add Account** and run setup again with the same Modal account and a valid Hugging Face token. The operation safely updates the existing account.
 
 ### Setup was interrupted during deployment
 
-Open **Add Modal account** and submit the same credentials again. Provisioning is intentionally repeatable: the Modal secret is updated, deployments are safely reapplied, and the local Compute account is created only after every setup step succeeds. A failed attempt does not require terminal cleanup.
+Open **Add Account** and submit the same credentials again. Provisioning is intentionally repeatable: the Modal secret is updated, deployments are safely reapplied, and the local Compute account is created only after every setup step succeeds. A failed attempt does not require terminal cleanup.
 
 ### An account is verified but a tool is not ready
 
-Select **Refresh all**. If the tool still shows **Deployment needed**, rerun **Add Modal account** for that same Modal account; the setup wizard redeploys both expected apps. If it shows **Balance unavailable**, verify the workspace plan and billing data in Modal.
+Select **Refresh all**. If the tool still shows **Deployment needed**, rerun **Add Account** for that same Modal account; the setup wizard redeploys both expected apps. If it shows **Balance unavailable**, verify the workspace plan and billing data in Modal.
 
 ### A removed account is still visible in Modal
 

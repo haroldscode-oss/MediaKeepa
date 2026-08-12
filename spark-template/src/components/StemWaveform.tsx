@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react"
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react"
 
 type StemWaveformProps = {
   label: string
@@ -88,10 +88,12 @@ export function StemWaveform({
   onSeek,
 }: StemWaveformProps) {
   const [hoverTime, setHoverTime] = useState<number | null>(null)
+  const [isScrubbing, setIsScrubbing] = useState(false)
   const barRefs = useRef<Array<HTMLSpanElement | null>>([])
   const playedBarRefs = useRef<Array<HTMLSpanElement | null>>([])
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const scrubbingPointerRef = useRef<number | null>(null)
   const progressRef = useRef(0)
   const progress = duration > 0 ? clamp(currentTime / duration, 0, 1) : 0
   progressRef.current = progress
@@ -363,10 +365,59 @@ export function StemWaveform({
     return resetBars
   }, [analyser, isPlaying, response])
 
-  const timeFromPointer = (event: MouseEvent<HTMLDivElement>) => {
-    const rect = timelineRef.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()
-    const percentage = clamp((event.clientX - rect.left) / rect.width, 0, 1)
+  const timeFromClientX = (clientX: number, fallbackTarget: HTMLDivElement) => {
+    const rect = timelineRef.current?.getBoundingClientRect() ?? fallbackTarget.getBoundingClientRect()
+    const percentage = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1)
     return percentage * duration
+  }
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!duration || !event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return
+
+    event.preventDefault()
+    scrubbingPointerRef.current = event.pointerId
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setIsScrubbing(true)
+    const nextTime = timeFromClientX(event.clientX, event.currentTarget)
+    setHoverTime(nextTime)
+    onSeek(nextTime)
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!duration) return
+
+    const nextTime = timeFromClientX(event.clientX, event.currentTarget)
+    if (event.pointerType !== "touch" || scrubbingPointerRef.current === event.pointerId) {
+      setHoverTime(nextTime)
+    }
+    if (scrubbingPointerRef.current === event.pointerId) {
+      event.preventDefault()
+      onSeek(nextTime)
+    }
+  }
+
+  const finishScrubbing = (event: PointerEvent<HTMLDivElement>, commitPosition: boolean) => {
+    if (scrubbingPointerRef.current !== event.pointerId) return
+
+    if (commitPosition && duration) {
+      const nextTime = timeFromClientX(event.clientX, event.currentTarget)
+      onSeek(nextTime)
+      setHoverTime(event.pointerType === "touch" ? null : nextTime)
+    } else if (event.pointerType === "touch") {
+      setHoverTime(null)
+    }
+    scrubbingPointerRef.current = null
+    setIsScrubbing(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const handleLostPointerCapture = (event: PointerEvent<HTMLDivElement>) => {
+    if (scrubbingPointerRef.current !== event.pointerId) return
+    scrubbingPointerRef.current = null
+    setIsScrubbing(false)
+    if (event.pointerType === "touch") setHoverTime(null)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -393,10 +444,15 @@ export function StemWaveform({
         aria-valuemax={Math.max(0, Math.floor(duration))}
         aria-valuenow={Math.floor(currentTime)}
         aria-valuetext={`${formatAudioTime(currentTime)} of ${formatAudioTime(duration)}`}
-        className="group relative cursor-pointer rounded-xl bg-muted/75 px-3 py-3 outline-none ring-offset-background transition-shadow hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={(event) => duration && onSeek(timeFromPointer(event))}
-        onMouseMove={(event) => duration && setHoverTime(timeFromPointer(event))}
-        onMouseLeave={() => setHoverTime(null)}
+        data-scrubbing={isScrubbing ? "true" : "false"}
+        title="Click or drag to move through the audio"
+        className={`group relative touch-none select-none rounded-xl bg-muted/75 px-3 py-3 outline-none ring-offset-background transition-shadow hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring ${isScrubbing ? "cursor-grabbing ring-2 ring-foreground/30" : "cursor-pointer"}`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={(event) => finishScrubbing(event, true)}
+        onPointerCancel={(event) => finishScrubbing(event, false)}
+        onLostPointerCapture={handleLostPointerCapture}
+        onPointerLeave={() => { if (scrubbingPointerRef.current === null) setHoverTime(null) }}
         onKeyDown={handleKeyDown}
       >
         <div ref={timelineRef} className="relative h-20 overflow-hidden sm:h-24">

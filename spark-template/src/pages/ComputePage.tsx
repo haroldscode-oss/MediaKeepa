@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ArrowClockwise,
+  CaretLeft,
+  CaretRight,
   CheckCircle,
   ClockCounterClockwise,
   Cpu,
@@ -33,7 +35,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
@@ -79,24 +80,25 @@ type ComputeJob = {
   submittedAt?: string
   durationSeconds?: number
   error?: string
+  attempts?: Array<unknown>
+  inputArtifact?: { sizeBytes?: number }
+  resultArtifact?: { sizeBytes?: number }
 }
+
+const JOBS_PER_PAGE = 5
 
 const tools = [
   {
     slug: "separate-audio",
     label: "Audio Separator",
-    description: "Separates an audio file into clean Vocals and Music stems.",
     icon: Waveform,
-    href: "/audio-separator",
     appName: "mediakeepa-audio-separator",
     estimatedCost: 0.5,
   },
   {
     slug: "remove-background",
     label: "Background Remover",
-    description: "Removes image backgrounds and returns a full-resolution transparent PNG.",
     icon: ImageIcon,
-    href: "/background-remover",
     appName: "mediakeepa-background-remover",
     estimatedCost: 0.05,
   },
@@ -125,6 +127,29 @@ function formatCredit(value?: number | null) {
   return value == null ? "Balance unavailable" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)} credits available`
 }
 
+function formatDuration(value?: number) {
+  if (value == null) return null
+  const seconds = Math.max(1, Math.round(value))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+function formatFileSize(value?: number) {
+  if (value == null || value < 1) return null
+  const units = ["B", "KB", "MB", "GB"]
+  const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(value / (1024 ** unit))} ${units[unit]}`
+}
+
+function statusLabel(status: string) {
+  const value = status.toLowerCase()
+  if (["succeeded", "completed"].includes(value)) return "Completed"
+  if (["failed", "error"].includes(value)) return "Failed"
+  if (["queued", "routing", "resolving"].includes(value)) return "Queued"
+  if (value === "detached") return "Interrupted"
+  return "Processing"
+}
+
 function appIsDeployed(account: ComputeAccount, expectedName: string) {
   const expected = expectedName.toLowerCase()
   return (account.apps || []).some((app) => {
@@ -139,6 +164,7 @@ export function ComputePage() {
   const [status, setStatus] = useState<ComputeStatus>({ accounts: [] })
   const [catalog, setCatalog] = useState<Catalog>({ applications: [] })
   const [jobs, setJobs] = useState<ComputeJob[]>([])
+  const [jobPage, setJobPage] = useState(1)
   const [performance, setPerformance] = useState<Performance>({
     mode: "Economy",
     alwaysOn: false,
@@ -215,14 +241,19 @@ export function ComputePage() {
     return { ready: true, label: "Ready" }
   }, [isBound])
 
-  const readyAccountsByTool = useMemo(() => new Map(tools.map((tool) => [
-    tool.slug,
-    accounts.filter((account) => toolState(account, tool).ready),
-  ])), [accounts, toolState])
-
   const highestCreditId = useMemo(() => [...accounts]
     .filter((account) => account.creditRemaining != null && ["healthy", "degraded"].includes(account.health || ""))
     .sort((left, right) => (right.creditRemaining || 0) - (left.creditRemaining || 0))[0]?.id, [accounts])
+
+  const totalJobPages = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE))
+  const paginatedJobs = useMemo(() => {
+    const start = (jobPage - 1) * JOBS_PER_PAGE
+    return jobs.slice(start, start + JOBS_PER_PAGE)
+  }, [jobPage, jobs])
+  const newestJobId = jobs[0]?.id
+
+  useEffect(() => { setJobPage(1) }, [newestJobId])
+  useEffect(() => { setJobPage((page) => Math.min(page, totalJobPages)) }, [totalJobPages])
 
   const openConnection = () => {
     setLabel("")
@@ -308,7 +339,7 @@ export function ComputePage() {
       <AppHeader />
 
       <main className="space-y-6 pb-8">
-        <section className="flex flex-col gap-5 rounded-3xl border bg-card p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-8">
+        <section className="flex flex-col gap-5 rounded-3xl border bg-card p-6 shadow-sm sm:p-8 md:flex-row md:items-center md:justify-between">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-foreground text-background">
               <Cpu size={25} weight="fill" />
@@ -321,21 +352,16 @@ export function ComputePage() {
             </div>
           </div>
           <Button onClick={openConnection} className="shrink-0 gap-2">
-            <LinkSimple size={17} weight="bold" /> Add Modal account
+            <LinkSimple size={17} weight="bold" /> Add Account
           </Button>
         </section>
 
         <Card>
           <CardHeader>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <CardTitle className="text-lg">Performance</CardTitle>
-                <CardDescription>Choose how quickly a recently used worker is ready for your next job. Neither option keeps a GPU always on.</CardDescription>
-              </div>
-              <Badge variant="outline" className="w-fit">Always-on: Off</Badge>
-            </div>
+            <CardTitle className="text-lg">Performance</CardTitle>
+            <CardDescription>Choose how quickly a recently used worker is ready for your next job. Neither option keeps a GPU always on.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2">
+          <CardContent className="grid gap-3 md:grid-cols-2">
             <button
               type="button"
               onClick={() => void applyPerformanceMode("Economy")}
@@ -356,7 +382,7 @@ export function ComputePage() {
               <span className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 font-semibold"><Lightning size={19} weight="fill" /> Fast <Badge variant="outline">Recommended</Badge></span>{performance.mode === "Fast" && <CheckCircle size={18} weight="fill" />}</span>
               <span className="mt-2 block text-sm leading-6 text-muted-foreground">After use, Audio stays ready for 10 minutes and Background Remover for 5 minutes, then both turn off.</span>
             </button>
-            {applyingMode && <p className="flex items-center gap-2 text-sm text-muted-foreground sm:col-span-2"><ArrowClockwise size={16} className="animate-spin" /> Applying the mode to {accounts.length || "your"} connected {accounts.length === 1 ? "account" : "accounts"}...</p>}
+            {applyingMode && <p className="flex items-center gap-2 text-sm text-muted-foreground md:col-span-2"><ArrowClockwise size={16} className="animate-spin" /> Applying the mode to {accounts.length || "your"} connected {accounts.length === 1 ? "account" : "accounts"}...</p>}
           </CardContent>
         </Card>
 
@@ -369,13 +395,13 @@ export function ComputePage() {
                 <LockKey size={25} weight="fill" />
               </div>
               <div className="space-y-2">
-                <h2 className="text-xl font-semibold">Add your first Modal account</h2>
+                <h2 className="text-xl font-semibold">Connect your first account</h2>
                 <p className="mx-auto max-w-lg text-sm leading-6 text-muted-foreground">
                   Paste your Modal and Hugging Face tokens once. MediaKeepa handles verification, secrets, deployment, model preparation, and tool linking automatically.
                 </p>
               </div>
               <Button size="lg" onClick={openConnection} className="gap-2">
-                <LinkSimple size={18} weight="bold" /> Add Modal account
+                <LinkSimple size={18} weight="bold" /> Add Account
               </Button>
               <p className="text-xs text-muted-foreground">Modal calls this an account's workspace. Your token stays encrypted for your Windows user.</p>
             </CardContent>
@@ -395,7 +421,7 @@ export function ComputePage() {
               {accounts.map((account) => (
                 <Card key={account.id}>
                   <CardContent className="space-y-4 p-5 sm:p-6">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-muted font-semibold">
                           {account.label.slice(0, 1).toUpperCase()}
@@ -426,7 +452,7 @@ export function ComputePage() {
                         </AlertDialogContent>
                       </AlertDialog>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-2 md:grid-cols-2">
                       {tools.map((tool) => {
                         const state = toolState(account, tool)
                         const Icon = tool.icon
@@ -446,74 +472,59 @@ export function ComputePage() {
           </section>
         )}
 
-        {!loading && <section className="space-y-3">
-          <div>
-            <h2 className="text-lg font-semibold">MediaKeepa tools</h2>
-            <p className="text-sm text-muted-foreground">There is no separate Modal connection per tool. Every ready account serves both tools.</p>
-          </div>
-          <Tabs defaultValue="separate-audio">
-            <TabsList className="grid h-12 w-full grid-cols-2">
-              {tools.map(({ slug, label: toolLabel, icon: Icon }) => (
-                <TabsTrigger key={slug} value={slug} className="gap-2"><Icon size={17} weight="bold" /><span>{toolLabel}</span></TabsTrigger>
-              ))}
-            </TabsList>
-            {tools.map((tool) => {
-              const Icon = tool.icon
-              const readyAccounts = readyAccountsByTool.get(tool.slug) || []
-              return (
-                <TabsContent key={tool.slug} value={tool.slug} className="mt-3">
-                  <Card>
-                    <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-start gap-4">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-muted"><Icon size={22} weight="fill" /></div>
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-semibold">{tool.label}</h3>
-                            <Badge variant="outline" className={cn(readyAccounts.length > 0 && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300")}>
-                              {readyAccounts.length > 0 ? `Ready on ${readyAccounts.length} ${readyAccounts.length === 1 ? "account" : "accounts"}` : accounts.length > 0 ? "Pool setup needed" : "Waiting for an account"}
-                            </Badge>
-                          </div>
-                          <p className="text-sm leading-6 text-muted-foreground">{tool.description}</p>
-                          <p className="text-xs text-muted-foreground">Jobs automatically use the ready account with the highest known available credit.</p>
-                        </div>
-                      </div>
-                      <Button variant="outline" asChild><a href={tool.href}>Open {tool.label}</a></Button>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-              )
-            })}
-          </Tabs>
-        </section>}
-
         <Card>
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted"><ClockCounterClockwise size={19} weight="bold" /></div>
-              <div><CardTitle className="text-lg">Recent jobs</CardTitle><CardDescription>Every routed job shows the MediaKeepa tool and Modal account that ran it.</CardDescription></div>
+              <div><CardTitle className="text-lg">Recent jobs</CardTitle><CardDescription>See what ran, where it ran, how long it took, and the result.</CardDescription></div>
             </div>
           </CardHeader>
           <CardContent>
             {jobs.length === 0 ? (
               <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">No MediaKeepa Compute jobs yet.</div>
             ) : (
-              <div className="divide-y rounded-xl border">
-                {jobs.map((job) => {
+              <div>
+                <div className="divide-y rounded-xl border">
+                {paginatedJobs.map((job) => {
                   const tool = jobTool(job)
                   const Icon = tool.icon
+                  const inputSize = formatFileSize(job.inputArtifact?.sizeBytes)
+                  const outputSize = formatFileSize(job.resultArtifact?.sizeBytes)
+                  const duration = formatDuration(job.durationSeconds)
+                  const attemptCount = job.attempts?.length || 0
                   return (
-                    <div key={job.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-center gap-3">
+                    <div key={job.id} className="flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted"><Icon size={20} weight="fill" /></div>
-                        <div className="min-w-0"><p className="truncate text-sm font-semibold">{tool.label}</p><p className="truncate text-xs text-muted-foreground">{job.selectedAccountLabel || "Modal account"} · {formatTime(job.submittedAt)}</p></div>
+                        <div className="min-w-0 space-y-1.5">
+                          <p className="truncate text-sm font-semibold">{tool.label}</p>
+                          <p className="truncate text-xs text-muted-foreground">{job.selectedAccountLabel || "Modal account"} · {formatTime(job.submittedAt)}</p>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            {inputSize && <span>Input {inputSize}</span>}
+                            {outputSize && <span>Output {outputSize}</span>}
+                            {attemptCount > 1 && <span>{attemptCount} attempts</span>}
+                          </div>
+                          {job.error && <p className="line-clamp-2 text-xs text-destructive">{job.error}</p>}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3 pl-[52px] sm:pl-0">
-                        {job.durationSeconds != null && <span className="text-xs tabular-nums text-muted-foreground">{Math.max(1, Math.round(job.durationSeconds))}s</span>}
-                        <Badge variant="outline" className={statusStyle(job.status)}>{job.status}</Badge>
+                      <div className="flex shrink-0 items-center gap-3 pl-[52px] md:pl-0">
+                        {duration && <span className="text-xs tabular-nums text-muted-foreground">{duration}</span>}
+                        <Badge variant="outline" className={statusStyle(job.status)}>{statusLabel(job.status)}</Badge>
                       </div>
                     </div>
                   )
-                })}
+                  })}
+                </div>
+                {jobs.length > JOBS_PER_PAGE && (
+                  <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <p className="text-xs text-muted-foreground">Showing {(jobPage - 1) * JOBS_PER_PAGE + 1}–{Math.min(jobPage * JOBS_PER_PAGE, jobs.length)} of {jobs.length} jobs</p>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setJobPage((page) => Math.max(1, page - 1))} disabled={jobPage === 1} className="gap-1"><CaretLeft size={15} /> Previous</Button>
+                      <span className="min-w-20 text-center text-xs text-muted-foreground">Page {jobPage} of {totalJobPages}</span>
+                      <Button variant="outline" size="sm" onClick={() => setJobPage((page) => Math.min(totalJobPages, page + 1))} disabled={jobPage === totalJobPages} className="gap-1">Next <CaretRight size={15} /></Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -523,7 +534,7 @@ export function ComputePage() {
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!submitting) setDialogOpen(open) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add Modal account</DialogTitle>
+            <DialogTitle>Add Account</DialogTitle>
             <DialogDescription>Two private credentials are all MediaKeepa needs. The complete setup runs here—no PowerShell, profile activation, or manual deployment.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
