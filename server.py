@@ -23,7 +23,8 @@ from concurrent.futures import ThreadPoolExecutor
 import secrets
 import atexit
 import base64
-from urllib.parse import urlparse
+import shutil
+from urllib.parse import urljoin, urlparse
 
 # Keep status logging reliable on Windows hosts whose console defaults to cp1252.
 for stream in (sys.stdout, sys.stderr):
@@ -328,6 +329,338 @@ def run_yt_dlp_with_clients(base_args, url, preferred_clients=None, log_prefix="
     if detail:
         message = f"{message}: {detail}"
     raise RuntimeError(message)
+
+
+TIKTOK_WEB_HOSTS = ("tiktok.com",)
+TIKTOK_MEDIA_HOSTS = (
+    "tiktok.com",
+    "tiktokcdn.com",
+    "tiktokcdn-us.com",
+    "tiktokv.com",
+    "tiktokv.us",
+)
+TIKTOK_PLAYER_API = "https://www.tiktok.com/player/api/v1/items"
+TIKTOK_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+)
+
+
+def hostname_matches(hostname, allowed_suffixes):
+    hostname = (hostname or "").lower().rstrip(".")
+    return any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in allowed_suffixes)
+
+
+def is_tiktok_url(url):
+    """Return True only for HTTP(S) URLs hosted by TikTok."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in ("http", "https") and hostname_matches(parsed.hostname, TIKTOK_WEB_HOSTS)
+
+
+def extract_tiktok_post_id(value):
+    """Extract a numeric TikTok post ID from a URL or player response."""
+    if not value:
+        return None
+    match = re.search(r"/(?:video|player/v1)/(\d{10,})", str(value))
+    return match.group(1) if match else None
+
+
+def resolve_tiktok_post_id(url):
+    """Resolve TikTok short links without following redirects off TikTok."""
+    post_id = extract_tiktok_post_id(url)
+    if post_id:
+        return post_id
+    if not is_tiktok_url(url):
+        raise ValueError("Not a TikTok URL")
+
+    current_url = url
+    headers = {"User-Agent": TIKTOK_USER_AGENT}
+    for _ in range(6):
+        response = requests.get(current_url, headers=headers, timeout=15, allow_redirects=False)
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            if not location:
+                break
+            next_url = urljoin(current_url, location)
+            if not is_tiktok_url(next_url):
+                raise RuntimeError("TikTok short link redirected outside TikTok")
+            current_url = next_url
+            post_id = extract_tiktok_post_id(current_url)
+            if post_id:
+                return post_id
+            continue
+
+        post_id = extract_tiktok_post_id(response.url)
+        if not post_id:
+            canonical = re.search(
+                r'https?://(?:www\.)?tiktok\.com/@[^"\s<>]+/video/(\d{10,})',
+                response.text or "",
+            )
+            post_id = canonical.group(1) if canonical else None
+        if post_id:
+            return post_id
+        break
+
+    raise RuntimeError("Could not resolve the TikTok post ID")
+
+
+def first_url(value):
+    """Get the first URL from TikTok's nested address objects."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return next((item for item in value if isinstance(item, str) and item), "")
+    if isinstance(value, dict):
+        for key in ("url_list", "urlList", "urls"):
+            result = first_url(value.get(key))
+            if result:
+                return result
+    return ""
+
+
+def validate_tiktok_media_url(url):
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme == "https" and hostname_matches(parsed.hostname, TIKTOK_MEDIA_HOSTS)
+
+
+def infer_tiktok_profile_dimensions(profile, overall_meta):
+    """Infer profile dimensions from TikTok gear labels such as adapt_lower_720_1."""
+    profile_meta = profile.get("video_meta") or profile.get("videoMeta") or profile.get("meta") or {}
+    width = profile_meta.get("width") or profile.get("width")
+    height = profile_meta.get("height") or profile.get("height")
+    gear_name = str(profile.get("gear_name") or profile.get("gearName") or "")
+    gear_match = re.search(r"(?:^|_)(\d{3,4})(?:_|$)", gear_name)
+    quality_height = int(gear_match.group(1)) if gear_match else None
+
+    if not width or not height:
+        overall_width = overall_meta.get("width") or 0
+        overall_height = overall_meta.get("height") or 0
+        if quality_height and overall_width and overall_height:
+            if overall_width == overall_height:
+                width = height = quality_height
+            elif overall_width < overall_height:
+                width = quality_height
+                height = round(quality_height * overall_height / overall_width)
+            else:
+                height = quality_height
+                width = round(quality_height * overall_width / overall_height)
+        else:
+            width = width or overall_width
+            height = height or overall_height
+
+    return width, height, quality_height or height
+
+
+def build_tiktok_player_metadata(item, webpage_url, post_id):
+    """Convert TikTok's official embed-player item into yt-dlp-style metadata."""
+    video_info = item.get("video_info") or item.get("videoInfo") or {}
+    meta = video_info.get("meta") or {}
+    author_info = item.get("author_info") or item.get("authorInfo") or {}
+    music_info = item.get("music_info") or item.get("musicInfo") or {}
+
+    thumbnails = []
+    thumbnail_fields = (
+        ("dynamicCover", "dynamic_cover"),
+        ("cover", "cover"),
+        ("originCover", "origin_cover"),
+    )
+    for thumbnail_id, field in thumbnail_fields:
+        url = first_url(video_info.get(field) or video_info.get(thumbnail_id))
+        if url and validate_tiktok_media_url(url):
+            thumbnails.append({"id": thumbnail_id, "url": url})
+
+    formats = []
+    for index, profile in enumerate(video_info.get("profiles") or []):
+        play_address = profile.get("play_addr") or profile.get("playAddr") or {}
+        media_url = first_url(play_address)
+        if not media_url or not validate_tiktok_media_url(media_url):
+            continue
+        profile_meta = profile.get("video_meta") or profile.get("videoMeta") or profile.get("meta") or {}
+        width, height, quality_height = infer_tiktok_profile_dimensions(profile, meta)
+        codec = str(profile.get("codec_type") or profile.get("codecType") or "h264").lower()
+        bitrate = profile.get("bitrate") or profile_meta.get("bitrate") or 0
+        data_size = profile.get("data_size") or profile.get("dataSize") or profile_meta.get("size")
+        formats.append({
+            "format_id": str(profile.get("gear_name") or profile.get("gearName") or index),
+            "url": media_url,
+            "ext": "mp4",
+            "video_ext": "mp4",
+            "audio_ext": "m4a",
+            "vcodec": "h265" if "265" in codec or "hevc" in codec else "h264",
+            "acodec": "aac",
+            "width": width,
+            "height": height,
+            "fps": profile_meta.get("fps") or profile.get("fps") or meta.get("fps"),
+            "_quality_height": quality_height,
+            "tbr": (float(bitrate) / 1000) if bitrate else None,
+            "filesize": data_size,
+        })
+
+    if not formats:
+        fallback_address = video_info.get("play_addr") or video_info.get("playAddr")
+        media_url = first_url(fallback_address)
+        if media_url and validate_tiktok_media_url(media_url):
+            formats.append({
+                "format_id": "default",
+                "url": media_url,
+                "ext": "mp4",
+                "video_ext": "mp4",
+                "audio_ext": "m4a",
+                "vcodec": "h264",
+                "acodec": "aac",
+                "width": meta.get("width"),
+                "height": meta.get("height"),
+            })
+
+    if not formats:
+        raise RuntimeError("TikTok returned metadata without a playable media stream")
+
+    duration = meta.get("duration") or item.get("duration")
+    try:
+        duration = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration = None
+    duration_string = "Unknown"
+    if duration is not None:
+        minutes, seconds = divmod(int(round(duration)), 60)
+        duration_string = f"{minutes}:{seconds:02d}"
+
+    title = (item.get("desc") or item.get("title") or f"TikTok {post_id}").strip()
+    uploader = author_info.get("nickname") or author_info.get("unique_id") or "TikTok Creator"
+    thumbnail = thumbnails[0]["url"] if thumbnails else ""
+    best_format = max(formats, key=lambda fmt: (fmt.get("height") or 0, fmt.get("tbr") or 0))
+    return {
+        "_mediakeepa_source": "tiktok-player-api",
+        "id": str(item.get("id") or post_id),
+        "title": title,
+        "description": title,
+        "uploader": uploader,
+        "creator": uploader,
+        "uploader_id": author_info.get("unique_id"),
+        "webpage_url": webpage_url,
+        "extractor": "tiktok",
+        "extractor_key": "TikTok",
+        "duration": duration,
+        "duration_string": duration_string,
+        "width": meta.get("width") or best_format.get("width"),
+        "height": meta.get("height") or best_format.get("height"),
+        "thumbnail": thumbnail,
+        "thumbnails": thumbnails,
+        "formats": formats,
+        "track": music_info.get("title"),
+        "artist": music_info.get("author") or music_info.get("author_name"),
+    }
+
+
+def fetch_tiktok_player_metadata(url):
+    """Fetch public post metadata through TikTok's official embed-player API."""
+    post_id = resolve_tiktok_post_id(url)
+    referer = f"https://www.tiktok.com/player/v1/{post_id}"
+    response = requests.get(
+        TIKTOK_PLAYER_API,
+        params={
+            "item_ids": post_id,
+            "language": "en-US",
+            "aid": "1459",
+            "data_source": "web_core",
+        },
+        headers={"User-Agent": TIKTOK_USER_AGENT, "Referer": referer},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    items = payload.get("items") or []
+    if not items:
+        raise RuntimeError("TikTok's player did not return this post")
+    return build_tiktok_player_metadata(items[0], url, post_id)
+
+
+def choose_tiktok_format(video_data, quality=None):
+    formats = [fmt for fmt in video_data.get("formats", []) if validate_tiktok_media_url(fmt.get("url"))]
+    if not formats:
+        raise RuntimeError("No safe TikTok media stream is available")
+
+    target_height = resolve_quality_height(quality)
+    if target_height:
+        at_or_below = [
+            fmt for fmt in formats
+            if (fmt.get("_quality_height") or fmt.get("height") or 0) <= target_height
+        ]
+        if at_or_below:
+            formats = at_or_below
+    return max(
+        formats,
+        key=lambda fmt: (
+            1 if fmt.get("vcodec") == "h264" else 0,
+            fmt.get("_quality_height") or fmt.get("height") or 0,
+            fmt.get("height") or 0,
+            fmt.get("tbr") or 0,
+        ),
+    )
+
+
+def download_tiktok_player_media(session_id, url, format_type, quality, cache_entry=None):
+    """Download and, when requested, convert a TikTok player stream."""
+    video_data = (cache_entry or {}).get("raw_metadata") or {}
+    if video_data.get("_mediakeepa_source") != "tiktok-player-api":
+        video_data = fetch_tiktok_player_metadata(url)
+    selected_format = choose_tiktok_format(video_data, quality)
+    media_url = selected_format["url"]
+    source_path = os.path.join(temp_downloads_path, f"{session_id}_raw.mp4")
+    headers = {
+        "User-Agent": TIKTOK_USER_AGENT,
+        "Referer": f"https://www.tiktok.com/player/v1/{video_data.get('id', '')}",
+    }
+    with requests.get(media_url, headers=headers, timeout=60, stream=True) as response:
+        response.raise_for_status()
+        if not validate_tiktok_media_url(response.url):
+            raise RuntimeError("TikTok media redirected to an unexpected host")
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        with open(source_path, "wb") as output:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if not chunk:
+                    continue
+                output.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    progress = min(downloaded * 100 / total, 99)
+                    download_progress[session_id]["progress"] = progress
+                    download_progress[session_id]["message"] = f"Downloading... {progress:.1f}%"
+
+    if not os.path.exists(source_path) or os.path.getsize(source_path) == 0:
+        raise RuntimeError("TikTok returned an empty media file")
+    if format_type.lower() == "mp4":
+        return source_path
+
+    bundled_ffmpeg = ROOT_DIR / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg")
+    ffmpeg = shutil.which("ffmpeg") or (str(bundled_ffmpeg) if bundled_ffmpeg.exists() else None)
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is required to convert this TikTok download")
+    output_path = os.path.join(temp_downloads_path, f"{session_id}_raw.{format_type.lower()}")
+    conversion = [ffmpeg, "-y", "-i", source_path]
+    if format_type.lower() == "mkv":
+        conversion += ["-c", "copy"]
+    elif format_type.lower() == "webm":
+        conversion += ["-c:v", "libvpx-vp9", "-c:a", "libopus"]
+    elif format_type.lower() == "mp3":
+        conversion += ["-vn", "-c:a", "libmp3lame", "-b:a", f"{quality or 192}k"]
+    elif format_type.lower() == "m4a":
+        conversion += ["-vn", "-c:a", "aac", "-b:a", f"{quality or 192}k"]
+    elif format_type.lower() == "flac":
+        conversion += ["-vn", "-c:a", "flac"]
+    else:
+        raise RuntimeError(f"Unsupported TikTok output format: {format_type}")
+    conversion.append(output_path)
+    subprocess.run(conversion, check=True, capture_output=True, text=True, timeout=180)
+    os.remove(source_path)
+    return output_path
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
@@ -1002,6 +1335,15 @@ def perform_download(session_id, url, format_type, quality, output_template, bas
                         used_cached_metadata = True
 
                 if not video_data or not thumbnail_url:
+                    try:
+                        print("TikTok yt-dlp metadata unavailable; using official player metadata")
+                        video_data = fetch_tiktok_player_metadata(url)
+                        video_title = video_data.get("title", video_title)
+                        thumbnail_url, best_thumbnail_id = get_best_tiktok_thumbnail(video_data)
+                    except Exception as player_error:
+                        print(f"TikTok player metadata fallback failed: {player_error}")
+
+                if not video_data or not thumbnail_url:
                     if not cache_entry:
                         print("⚠️ No cached TikTok metadata available; invoking yt-dlp")
                     else:
@@ -1079,10 +1421,28 @@ def perform_download(session_id, url, format_type, quality, output_template, bas
         success = False
         successful_client = None
 
+        if not is_image_format and is_tiktok_url(url):
+            try:
+                download_progress[session_id]['message'] = 'Downloading through TikTok player...'
+                download_tiktok_player_media(
+                    session_id,
+                    url,
+                    format_type,
+                    quality,
+                    cache_entry,
+                )
+                success = True
+                successful_client = "tiktok-player-api"
+                print("TikTok player fallback download succeeded")
+            except Exception as player_error:
+                print(f"TikTok player fallback download failed; trying yt-dlp: {player_error}")
+
         import select
         import sys
 
         for idx, client in enumerate(clients):
+            if success:
+                break
             command = build_yt_dlp_command(base_command, url, client)
             client_label = client or "default"
 
@@ -1759,16 +2119,23 @@ def video_info():
         print(f"\n=== FETCHING VIDEO INFO ===")
         print(f"URL: {url}")
 
-        result, used_client = run_yt_dlp_with_clients(
-            base_command,
-            url,
-            log_prefix="video info",
-            capture_output=True,
-            text=True,
-            timeout=20  # Increased timeout for YouTube
-        )
+        used_client = None
+        try:
+            result, used_client = run_yt_dlp_with_clients(
+                base_command,
+                url,
+                log_prefix="video info",
+                capture_output=True,
+                text=True,
+                timeout=20  # Increased timeout for YouTube
+            )
+        except RuntimeError as yt_dlp_error:
+            if not is_tiktok_url(url):
+                raise
+            print(f"TikTok yt-dlp extraction failed; using official player fallback: {yt_dlp_error}")
+            result = None
         
-        if result.returncode != 0:
+        if result is not None and result.returncode != 0:
             print(f"ERROR: yt-dlp failed: {result.stderr}")
             return jsonify({
                 "status": "error",
@@ -1779,7 +2146,11 @@ def video_info():
         
         # Parse JSON output
         import json
-        video_data = json.loads(result.stdout)
+        video_data = (
+            json.loads(result.stdout)
+            if result is not None
+            else fetch_tiktok_player_metadata(url)
+        )
         
         # Extract thumbnail URL - USE DIRECT URL FOR SPEED (except Instagram)
         thumbnail_url = video_data.get("thumbnail", "")
@@ -2115,6 +2486,16 @@ def get_video_url():
         return jsonify({"status": "error", "message": "Missing URL"}), 400
     
     try:
+        if is_tiktok_url(url):
+            cache_key = hashlib.md5(url.encode()).hexdigest()
+            cache_entry = video_cache.get(cache_key) or {}
+            video_data = cache_entry.get("raw_metadata") or fetch_tiktok_player_metadata(url)
+            selected_format = choose_tiktok_format(video_data, "720p")
+            return jsonify({
+                "status": "success",
+                "videoUrl": selected_format["url"],
+            })
+
         # Use yt-dlp to get the best video URL (medium quality for preview)
         base_command = [YTDLP_CMD, "--get-url", "-f", "best[height<=720]/best"]
         
