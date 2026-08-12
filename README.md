@@ -1,63 +1,103 @@
 # MediaKeepa
 
-A powerful media downloader supporting video, audio, and image downloads from various platforms.
+MediaKeepa is a responsive web application for downloading and processing media from one interface. The current build includes three operational tools:
 
-MediaKeepa also includes an AI Audio Separator that uses Modal GPU acceleration to produce two clear outputs: Vocals and Music. The quality-first GPU pipeline uses the specialist `model_bs_roformer_ep_317_sdr_12.9755.ckpt` model; local Demucs remains available only as a safety fallback and combines its accompaniment stems into one Music track.
+- **Media Downloader** — inspect a supported URL and download video, audio, images, or captions with yt-dlp and FFmpeg.
+- **Audio Separator** — separate an uploaded audio file into lossless Vocals and Music WAV stems with BS-RoFormer on Modal.
+- **Background Remover** — remove an image background with Bria RMBG-2.0 on Modal and download a full-resolution transparent PNG.
 
-Deploy `modal_audio_separator.py` with `modal deploy modal_audio_separator.py` after authenticating the Modal CLI. Model weights are cached in the `mediakeepa-audio-models` Modal Volume. The backend defaults to `AUDIO_SEPARATOR_BACKEND=auto`, which uses Modal when configured and safely falls back to local Demucs. The fallback uses 4 Demucs prediction shifts, 50% overlap, the model's native segment size, and lossless WAV output.
+The React interface and Flask API share one origin. It works on desktop and mobile browsers, supports light and dark themes, and is served locally at `http://127.0.0.1:8080` by default.
 
-MediaKeepa can also route separation through the bundled `modal-rotation` control plane. Initialize the component with `git submodule update --init modal-rotation`, configure its connected workspaces and the logical `mediakeepa / separate-audio` workload, then set `AUDIO_SEPARATOR_CONTROL_PLANE_URL=http://localhost:8765`. In `auto` mode, MediaKeepa tries the control plane first, direct Modal second, and local Demucs last. See [MODAL_ROTATION_INTEGRATION.md](MODAL_ROTATION_INTEGRATION.md) for setup and security boundaries.
+For the complete operational snapshot, including the active GPU configuration, architecture, limits, routing behavior, benchmarks, and validation status, see [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md).
 
-The image-only **Background Remover** accepts JPG, PNG, and WebP uploads and returns a full-resolution transparent PNG using Bria RMBG-2.0. For self-hosting, accept the model terms on Hugging Face, create a Modal secret named `MediaKeepa_backgroundremover` containing `HF_TOKEN`, and deploy `modal_background_remover.py`. Run `modal run modal_background_remover.py::download_weights` once to prefetch the gated weights into the persistent `mediakeepa-background-remover` Modal volume; normal requests also populate that cache automatically if needed. The self-hosted weights are non-commercial unless you have a separate Bria agreement.
+## Quick start
 
-For lowest latency, run `.\set-mediakeepa-performance.ps1 -Mode Fast`. Fast mode deploys class-based workers that load their models before accepting traffic, keeps one Audio Separator L40S and one Background Remover L4 container warm, and retains existing function entrypoints for Modal-Rotation compatibility. This prioritizes responsiveness but reserves approximately `$2.75/hour` in GPUs at current Modal rates, before CPU and memory. Run `.\set-mediakeepa-performance.ps1 -Mode Economy` to return both workers to scale-to-zero L4 operation.
-
-## 🚀 Quick Start
-
-### Start MediaKeepa
 ```powershell
+git submodule update --init modal-rotation
 .\start-mediakeepa.ps1
 ```
-The launcher starts Modal-Rotation and the Flask API + built React UI on `http://localhost:8080`.
 
-### Stop MediaKeepa
+The launcher starts:
+
+- MediaKeepa UI and API: `http://127.0.0.1:8080`
+- Modal-Rotation control plane: `http://127.0.0.1:8765`
+- LAN/mobile access: the `http://<LAN-IP>:8080` address printed by the launcher
+
+Stop both local services with:
+
 ```powershell
 .\stop-mediakeepa.ps1
 ```
 
-## 📁 Project Structure
+## Performance modes
 
-```
-Dropvalley/
-├── server.py              # Backend Flask API
-├── run.py                 # Unified launcher (builds frontend + starts API)
-├── spark-template/        # Frontend React app
-├── yt-dlp.exe            # Video downloader
-├── ffmpeg.exe            # Media processor
-├── ffprobe.exe           # Media analyzer
-├── temp_downloads/       # Temporary download storage
-├── .venv/                # Python environment
-├── start-all-servers.bat # Legacy helper (replaced by run.py)
-└── stop-all-servers.bat  # Legacy helper (replaced by run.py)
+The currently recommended interactive configuration is Fast mode:
+
+```powershell
+.\set-mediakeepa-performance.ps1 -Mode Fast
 ```
 
-## 🛠️ Tech Stack
+Fast mode keeps the quality-first models loaded in warm containers, uses an L40S for Audio Separator and an L4 for Background Remover, and sends interactive requests directly to the preloaded Modal classes. It preserves the selected mode across ordinary application restarts in `.runtime/performance-mode`.
 
-- **Backend**: Python Flask
-- **Frontend**: React + TypeScript + Vite
-- **Downloader**: yt-dlp
-- **Media Processing**: FFmpeg
+To allow the workers to scale to zero and use the multi-workspace routing/fallback chain, switch to Economy mode:
 
-## 📝 Development
+```powershell
+.\set-mediakeepa-performance.ps1 -Mode Economy
+```
 
-Everything now runs on a single origin (`http://localhost:5000`). The launcher rebuilds the frontend when source files change, so you can focus on development without juggling multiple servers.
+Fast mode prioritizes latency and reserves approximately `$2.75/hour` of GPU capacity at the rates used when this configuration was created, before CPU and memory. Economy mode reduces idle cost but reintroduces cold-start and routing latency.
 
-## 🍪 YouTube Cookies
+## Quality configuration
 
-Some YouTube downloads now require an authenticated session. Provide cookies in [Netscape format](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp) so yt-dlp can bypass the "confirm you're not a bot" gate:
+The speed improvements do not use weaker models or lossy output:
 
-- Drop a `youtube_cookies.txt` file in the project root (git-ignored).
-- or set `YT_COOKIES_FILE` to an absolute/relative path inside the container.
-- or set `YT_COOKIES_B64` to a base64-encoded cookies.txt payload (handy for Railway env vars).
+- Audio uses `model_bs_roformer_ep_317_sdr_12.9755.ckpt` and returns lossless WAV stems.
+- Background removal uses `briaai/RMBG-2.0` and returns a lossless RGBA PNG at the uploaded image's original dimensions.
+- The optimizations come from warm model containers, direct interactive routing, fewer redundant image encodes, and uncompressed ZIP packaging for already-uncompressed WAV files.
 
-The backend automatically passes these cookies to yt-dlp for YouTube-only requests. Rotate the file when YouTube invalidates the session.
+## Model setup
+
+Audio weights are cached in the `mediakeepa-audio-models` Modal Volume.
+
+RMBG-2.0 is gated. Accept its terms on Hugging Face, create a Modal secret named `MediaKeepa_backgroundremover` containing `HF_TOKEN`, and prefetch the weights if needed:
+
+```powershell
+.\.venv\Scripts\modal.exe run modal_background_remover.py::download_weights
+```
+
+The weights are cached in the `mediakeepa-background-remover` Modal Volume. The self-hosted RMBG-2.0 weights are non-commercial unless a separate Bria agreement applies.
+
+## Frontend development
+
+The production frontend is served from `spark-template/dist` by Flask. Rebuild it after changes under `spark-template/src`:
+
+```powershell
+Set-Location .\spark-template
+npm install
+npm run build
+```
+
+## YouTube authentication
+
+Some YouTube media requires an authenticated session. Provide Netscape-format cookies using one of these options:
+
+- Place `youtube_cookies.txt` in the repository root; it is git-ignored.
+- Set `YT_COOKIES_FILE` to the cookies file path.
+- Set `YT_COOKIES_B64` to a base64-encoded cookies file.
+
+MediaKeepa adds the configured cookies only to YouTube requests. TikTok also has an official-player fallback for public posts when its yt-dlp extractor is rejected.
+
+## Technology
+
+- React 19, TypeScript, Vite, Tailwind CSS
+- Flask, Pillow, yt-dlp, FFmpeg
+- Modal GPU workers and persistent Modal Volumes
+- Bundled Modal-Rotation control plane for optional multi-workspace routing
+
+## More documentation
+
+- [Current operational state](docs/CURRENT_STATE.md)
+- [Startup and operations](STARTUP.md)
+- [Modal-Rotation integration](MODAL_ROTATION_INTEGRATION.md)
+- [Deployment guide](DEPLOYMENT_GUIDE.md)
+- [Security policy](SECURITY.md)

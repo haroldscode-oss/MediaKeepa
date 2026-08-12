@@ -170,7 +170,9 @@ class BackgroundRemover:
         result = original.convert("RGBA")
         result.putalpha(mask)
         output = io.BytesIO()
-        result.save(output, format="PNG", optimize=True)
+        # Low compression keeps lossless output while avoiding an expensive
+        # full-resolution optimization pass on the user's critical path.
+        result.save(output, format="PNG", compress_level=1)
         return output.getvalue()
 
 

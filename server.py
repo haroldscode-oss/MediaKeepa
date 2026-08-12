@@ -1204,7 +1204,9 @@ def complete_audio_separator_job(job_id, stem_files, processor):
 
     archive_name = f"{job_id}_stems.zip"
     archive_path = os.path.join(temp_downloads_path, archive_name)
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    # WAV recompression delays the completion signal without changing audio
+    # quality. Store stems directly so speed-first jobs finish immediately.
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
         for stem in stems:
             filename = stem["url"].rsplit("/", 1)[-1]
             archive.write(
@@ -1276,7 +1278,7 @@ def run_audio_separation(job_id, input_path):
                     message="Separating vocals and music with BS-RoFormer on Modal GPU...",
                 )
                 stem_files = run_modal_audio_separation(job_id, input_path)
-                processor = "modal-l4-bs-roformer"
+                processor = "modal-l40s-bs-roformer"
             except Exception as modal_error:
                 if AUDIO_SEPARATOR_BACKEND == "modal":
                     raise
@@ -1364,7 +1366,7 @@ def update_background_remover_job(job_id, **changes):
 
 
 def normalize_background_remover_image(input_path):
-    """Validate an uploaded image and return an orientation-corrected PNG."""
+    """Validate an uploaded image without recompressing it before GPU upload."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     try:
@@ -1379,16 +1381,13 @@ def normalize_background_remover_image(input_path):
                 raise ValueError("Images must be 16,000 pixels or smaller on each side.")
             if width * height > BACKGROUND_REMOVER_MAX_PIXELS:
                 raise ValueError("Images must contain 64 megapixels or fewer.")
-            image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-            output = io.BytesIO()
-            image.save(output, format="PNG", optimize=True)
-            return output.getvalue(), width, height
+            return Path(input_path).read_bytes(), width, height
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("Choose a valid JPG, PNG, or WebP image.") from exc
 
 
 def validate_background_remover_result(image_bytes):
-    """Normalize provider output to a non-empty RGBA PNG."""
+    """Validate the Modal RGBA PNG without recompressing it again."""
     from PIL import Image, UnidentifiedImageError
 
     if not isinstance(image_bytes, bytes) or not image_bytes:
@@ -1396,10 +1395,9 @@ def validate_background_remover_result(image_bytes):
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             image.load()
-            normalized = image.convert("RGBA")
-            output = io.BytesIO()
-            normalized.save(output, format="PNG", optimize=True)
-            return output.getvalue(), normalized.size
+            if image.format != "PNG" or image.mode != "RGBA":
+                raise RuntimeError("The background remover returned a non-transparent image.")
+            return image_bytes, image.size
     except (UnidentifiedImageError, OSError) as exc:
         raise RuntimeError("The background remover returned an invalid image.") from exc
 

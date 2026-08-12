@@ -14,6 +14,8 @@ if (-not (Test-Path -LiteralPath $modal)) {
 }
 
 if ($Mode -eq "Fast") {
+    $env:AUDIO_SEPARATOR_BACKEND = "modal"
+    $env:BACKGROUND_REMOVER_BACKEND = "modal"
     $env:MEDIAKEEPA_AUDIO_GPU = "L40S"
     $env:MEDIAKEEPA_AUDIO_MIN_CONTAINERS = "1"
     $env:MEDIAKEEPA_AUDIO_BUFFER_CONTAINERS = "0"
@@ -23,6 +25,8 @@ if ($Mode -eq "Fast") {
     $env:MEDIAKEEPA_BACKGROUND_BUFFER_CONTAINERS = "0"
     $env:MEDIAKEEPA_BACKGROUND_SCALEDOWN_WINDOW = "1200"
 } else {
+    $env:AUDIO_SEPARATOR_BACKEND = "auto"
+    $env:BACKGROUND_REMOVER_BACKEND = "auto"
     $env:MEDIAKEEPA_AUDIO_GPU = "L4"
     $env:MEDIAKEEPA_AUDIO_MIN_CONTAINERS = "0"
     $env:MEDIAKEEPA_AUDIO_BUFFER_CONTAINERS = "0"
@@ -39,6 +43,10 @@ Write-Host "Deploying MediaKeepa GPU workers in $Mode mode..."
 if ($LASTEXITCODE -ne 0) { throw "Audio Separator deployment failed." }
 & $modal deploy (Join-Path $root "modal_background_remover.py")
 if ($LASTEXITCODE -ne 0) { throw "Background Remover deployment failed." }
+
+$runtime = Join-Path $root ".runtime"
+New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $runtime "performance-mode") -Value $Mode -Encoding ASCII
 
 if (-not $SkipRestart) {
     & (Join-Path $root "stop-mediakeepa.ps1")

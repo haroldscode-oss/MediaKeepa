@@ -11,6 +11,13 @@ $python = Join-Path $root ".venv\Scripts\python.exe"
 $controlPlane = Join-Path $root "modal-rotation\dashboard-server.ps1"
 $runtime = Join-Path $root ".runtime"
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+$performanceModeFile = Join-Path $runtime "performance-mode"
+$performanceMode = if (Test-Path -LiteralPath $performanceModeFile) {
+    (Get-Content -LiteralPath $performanceModeFile -Raw).Trim()
+} else {
+    "Auto"
+}
+$defaultInteractiveBackend = if ($performanceMode -eq "Fast") { "modal" } else { "auto" }
 
 if (-not (Test-Path -LiteralPath $python)) { throw "MediaKeepa's .venv is missing. Create it and install requirements.txt first." }
 if (-not (Test-Path -LiteralPath $controlPlane)) { throw "The modal-rotation component is missing. Initialize it before starting MediaKeepa." }
@@ -47,13 +54,13 @@ if (-not (Wait-Endpoint "http://127.0.0.1:$ControlPlanePort/api/health" 1)) {
     Set-Content -LiteralPath (Join-Path $runtime "modal-rotation.pid") -Value (Get-ListenerProcessId $ControlPlanePort) -Encoding ASCII
 }
 
-$env:AUDIO_SEPARATOR_BACKEND = "auto"
+$env:AUDIO_SEPARATOR_BACKEND = $(if ($env:AUDIO_SEPARATOR_BACKEND) { $env:AUDIO_SEPARATOR_BACKEND } else { $defaultInteractiveBackend })
 $env:AUDIO_SEPARATOR_CONTROL_PLANE_URL = "http://127.0.0.1:$ControlPlanePort"
 $env:AUDIO_SEPARATOR_CONTROL_PLANE_APPLICATION = "mediakeepa"
 $env:AUDIO_SEPARATOR_CONTROL_PLANE_WORKLOAD = "separate-audio"
 $env:AUDIO_SEPARATOR_CONTROL_PLANE_ESTIMATED_COST_USD = "0.50"
 $env:AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS = "1800"
-$env:BACKGROUND_REMOVER_BACKEND = $(if ($env:BACKGROUND_REMOVER_BACKEND) { $env:BACKGROUND_REMOVER_BACKEND } else { "auto" })
+$env:BACKGROUND_REMOVER_BACKEND = $(if ($env:BACKGROUND_REMOVER_BACKEND) { $env:BACKGROUND_REMOVER_BACKEND } else { $defaultInteractiveBackend })
 $env:BACKGROUND_REMOVER_CONTROL_PLANE_URL = $(if ($env:BACKGROUND_REMOVER_CONTROL_PLANE_URL) { $env:BACKGROUND_REMOVER_CONTROL_PLANE_URL } else { "http://127.0.0.1:$ControlPlanePort" })
 $env:BACKGROUND_REMOVER_CONTROL_PLANE_APPLICATION = "mediakeepa"
 $env:BACKGROUND_REMOVER_CONTROL_PLANE_WORKLOAD = "remove-background"

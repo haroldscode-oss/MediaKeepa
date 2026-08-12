@@ -1,130 +1,125 @@
-# MediaKeepa Startup Guide
+# MediaKeepa startup and operations
 
 ## Prerequisites
-- Python 3.11+ installed with virtual environment at `.venv`
-- Node.js installed (for building frontend)
-- Cloudflared installed at `C:\cloudflared\cloudflared.exe`
-- Domain: mediakeepa.com configured with Cloudflare Tunnel
 
-## Starting the Website
+- Windows PowerShell
+- Python environment at `.venv` with `requirements.txt` installed
+- Node.js only when rebuilding the frontend
+- Authenticated Modal CLI for GPU deployment and invocation
+- Initialized `modal-rotation` submodule
+- `ffmpeg` and `ffprobe` available on `PATH` or as local executables
 
-### 1. Start Flask Backend
-Open PowerShell in the project directory and run:
-```powershell
-.\.venv\Scripts\Activate.ps1
-python server.py
-```
-
-The backend will start on:
-- http://127.0.0.1:8080
-- http://localhost:8080
-- http://192.168.1.164:8080 (LAN)
-
-Keep this terminal window open.
-
-### 2. Verify Cloudflare Tunnel Service
-Check if the cloudflared Windows service is running:
-```powershell
-Get-Service cloudflared
-```
-
-If it's stopped, start it:
-```powershell
-Start-Service cloudflared
-```
-
-Verify tunnel connections:
-```powershell
-C:\cloudflared\cloudflared.exe tunnel list
-```
-
-You should see `mediakeepa-tunnel` with 2-4 active connections (e.g., `2xmia01, 1xmia05, 1xmia08`).
-
-### 3. Access the Website
-- **Locally**: http://localhost:8080
-- **Public domain**: https://mediakeepa.com
-
-## Stopping the Website
-
-### Stop Backend
-Press `Ctrl+C` in the PowerShell window running `python server.py`, or:
-```powershell
-Get-Process python | Stop-Process -Force
-```
-
-### Stop Cloudflare Tunnel (Optional)
-```powershell
-Stop-Service cloudflared
-```
-
-## Building Frontend (Only if you make changes)
-If you modify any frontend code in `spark-template/src/`:
+Initialize a new checkout with:
 
 ```powershell
-cd spark-template
+git submodule update --init modal-rotation
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Set-Location .\spark-template
+npm install
 npm run build
+Set-Location ..
 ```
 
-This creates production files in `spark-template/dist/` which Flask serves automatically.
+## Start
+
+From the repository root:
+
+```powershell
+.\start-mediakeepa.ps1
+```
+
+The launcher starts the Modal-Rotation control plane on loopback port `8765`, starts the Flask API and built React UI on port `8080`, detects the machine's LAN IPv4 address, and prints both desktop and mobile URLs.
+
+Default endpoints:
+
+- Local UI/API: `http://127.0.0.1:8080`
+- Health check: `http://127.0.0.1:8080/ping`
+- Modal-Rotation health: `http://127.0.0.1:8765/api/health`
+- Mobile on the same network: `http://<LAN-IP>:8080`
+
+The Windows firewall must allow inbound TCP port `8080` for LAN/mobile access. Port `8765` should remain private and bound to loopback.
+
+## Stop
+
+```powershell
+.\stop-mediakeepa.ps1
+```
+
+The scripts keep PID and performance-mode state under the git-ignored `.runtime` directory.
+
+## Select a performance mode
+
+Fast mode is the responsive interactive configuration:
+
+```powershell
+.\set-mediakeepa-performance.ps1 -Mode Fast
+```
+
+It deploys and warms:
+
+- one L40S Audio Separator container with BS-RoFormer
+- one L4 Background Remover container with RMBG-2.0
+
+It also sets both interactive backends to direct Modal so Modal-Rotation polling and artifact relaying are not on the user-facing critical path. The selected mode is saved and restored on later application restarts.
+
+Economy mode permits scale-to-zero operation and restores automatic routing:
+
+```powershell
+.\set-mediakeepa-performance.ps1 -Mode Economy
+```
+
+## Build the frontend
+
+Flask serves the production bundle from `spark-template/dist`. After changing frontend source:
+
+```powershell
+Set-Location .\spark-template
+npm run build
+Set-Location ..
+```
+
+Restart MediaKeepa so the latest bundle is served.
+
+## Verify operation
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/ping
+Invoke-RestMethod http://127.0.0.1:8765/api/health
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+The detailed expected state is recorded in [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md).
+
+## Logs
+
+- `.mediakeepa.out.log` and `.mediakeepa.err.log`
+- `.modal-rotation.out.log` and `.modal-rotation.err.log`
+
+These runtime logs are git-ignored.
 
 ## Troubleshooting
 
-### Website shows "Bad gateway (502)"
-- Check if Flask backend is running on port 8080
-- Verify cloudflared service status: `Get-Service cloudflared`
-- Check tunnel connections: `C:\cloudflared\cloudflared.exe tunnel list`
+### White page or stale interface
 
-### Website shows "Error 1033 - Tunnel error"
-- The cloudflared service may be using an old token
-- Restart the service: `Restart-Service cloudflared`
-- If still failing, reinstall with fresh token from Cloudflare dashboard
+Rebuild `spark-template`, restart MediaKeepa, and perform a hard refresh in the browser. Flask must serve the current `spark-template/dist/index.html` and assets.
 
-### Flask won't start - Port 8080 in use
-```powershell
-netstat -ano | findstr ":8080"
-# Kill the process using that port
-Stop-Process -Id <PID> -Force
-```
+### Port 8080 is already in use
 
-### Tunnel has no connections
-Check service is using correct token:
-```powershell
-Get-WmiObject Win32_Service -Filter "Name='cloudflared'" | Select-Object Name,PathName | Format-List
-```
+Use `netstat -ano | Select-String ':8080'` to find the listener. Prefer `stop-mediakeepa.ps1` when the existing process is a MediaKeepa instance.
 
-## Important Notes
-- The Flask backend must be running for the website to work
-- The cloudflared service handles HTTPS and routes traffic from mediakeepa.com to localhost:8080
-- Frontend is pre-built and served by Flask - no separate frontend server needed
-- Keep the Flask terminal window open while the site should be accessible
+### GPU request has cold-start latency
 
-## Quick Start Command
-```powershell
-.\.venv\Scripts\Activate.ps1; python server.py
-```
+Check `.runtime/performance-mode`. Run `set-mediakeepa-performance.ps1 -Mode Fast` to redeploy warm workers and persist direct routing. Fast mode reserves continuous GPU capacity.
 
-## Architecture
-```
-User Browser → https://mediakeepa.com (Cloudflare CDN)
-              ↓
-         Cloudflare Tunnel (cloudflared service)
-              ↓
-         http://127.0.0.1:8080 (Flask backend)
-              ↓
-         Serves: spark-template/dist/ (frontend)
-                 /video-info, /download APIs
-```
+### YouTube authentication error
 
-## CORS Configuration
-The backend allows requests from:
-- http://localhost:8080
-- http://127.0.0.1:8080
-- https://mediakeepa.com
-- https://www.mediakeepa.com
+Provide `youtube_cookies.txt`, `YT_COOKIES_FILE`, or `YT_COOKIES_B64`, then restart the application.
 
-## Current Status
-- **Domain**: mediakeepa.com (live via Cloudflare Tunnel)
-- **Backend**: Flask 3.1.2 (development server)
-- **Frontend**: Vite 6.3.7 (pre-built static files)
-- **yt-dlp**: 2025.10.22.232844.dev0 (latest nightly)
-- **Tunnel**: mediakeepa-tunnel (ID: c7dd0563-1c17-460d-ac36-ec6860daa0dd)
+### Background Remover cannot access the model
+
+Confirm the Hugging Face account accepted the RMBG-2.0 terms and the Modal secret `MediaKeepa_backgroundremover` contains a valid `HF_TOKEN`.
+
+### Mobile cannot connect
+
+Keep the phone and computer on the same LAN, use the exact LAN URL printed by the launcher, leave MediaKeepa running, and permit inbound TCP port `8080` in Windows Firewall. `127.0.0.1` on the phone refers to the phone itself and will not reach the computer.
