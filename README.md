@@ -6,16 +6,20 @@ MediaKeepa also includes an AI Audio Separator that uses Modal GPU acceleration 
 
 Deploy `modal_audio_separator.py` with `modal deploy modal_audio_separator.py` after authenticating the Modal CLI. Model weights are cached in the `mediakeepa-audio-models` Modal Volume. The backend defaults to `AUDIO_SEPARATOR_BACKEND=auto`, which uses Modal when configured and safely falls back to local Demucs. The fallback uses 4 Demucs prediction shifts, 50% overlap, the model's native segment size, and lossless WAV output.
 
+MediaKeepa can also route separation through the bundled `modal-rotation` control plane. Initialize the component with `git submodule update --init modal-rotation`, configure its connected workspaces and the logical `mediakeepa / separate-audio` workload, then set `AUDIO_SEPARATOR_CONTROL_PLANE_URL=http://localhost:8765`. In `auto` mode, MediaKeepa tries the control plane first, direct Modal second, and local Demucs last. See [MODAL_ROTATION_INTEGRATION.md](MODAL_ROTATION_INTEGRATION.md) for setup and security boundaries.
+
 ## 🚀 Quick Start
 
 ### Start MediaKeepa
 ```powershell
-python run.py
+.\start-mediakeepa.ps1
 ```
-The launcher will build the React frontend if needed and start the Flask API + UI on `http://localhost:5000`.
+The launcher starts Modal-Rotation and the Flask API + built React UI on `http://localhost:8080`.
 
 ### Stop MediaKeepa
-Press `Ctrl + C` in the terminal running `python run.py`.
+```powershell
+.\stop-mediakeepa.ps1
+```
 
 ## 📁 Project Structure
 

@@ -137,6 +137,11 @@ YOUTUBE_PLAYER_CLIENTS = [
     "web_embedded",  # Only embeddable videos, but still useful fallback
     "web_safari",    # Last resort without PO token
 ]
+YOUTUBE_JS_RUNTIME = os.environ.get("YT_DLP_JS_RUNTIME", "node").strip()
+YOUTUBE_REMOTE_COMPONENT = os.environ.get(
+    "YT_DLP_REMOTE_COMPONENT",
+    "ejs:github",
+).strip()
 
 
 def resolve_quality_height(value):
@@ -215,11 +220,26 @@ def is_youtube_url(url):
 
 
 def inject_youtube_cookies(command, url=None):
-    """Inject --cookies argument for YouTube downloads when configured."""
+    """Inject the YouTube runtime solver and optional cookies."""
     global missing_youtube_cookies_logged
 
     if not isinstance(command, list):
         command = list(command)
+
+    if url and is_youtube_url(url):
+        runtime_args = []
+        if YOUTUBE_JS_RUNTIME and "--js-runtimes" not in command:
+            runtime_args += ["--js-runtimes", YOUTUBE_JS_RUNTIME]
+        if YOUTUBE_REMOTE_COMPONENT and "--remote-components" not in command:
+            runtime_args += ["--remote-components", YOUTUBE_REMOTE_COMPONENT]
+
+        if runtime_args:
+            try:
+                url_index = command.index(url)
+            except ValueError:
+                command.extend(runtime_args)
+            else:
+                command[url_index:url_index] = runtime_args
 
     if not YOUTUBE_COOKIES_PATH:
         if url and is_youtube_url(url) and not missing_youtube_cookies_logged:
@@ -257,6 +277,20 @@ def build_yt_dlp_command(base_args, url, client=None):
     return inject_youtube_cookies(command, url)
 
 
+def summarize_yt_dlp_failure(stderr_text, url, limit=500):
+    """Return a concise, safe yt-dlp error suitable for API responses."""
+    lines = [line.strip() for line in (stderr_text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    detail = lines[-1]
+    if detail.lower().startswith("error:"):
+        detail = detail.split(":", 1)[1].strip()
+    if url:
+        detail = detail.replace(url, "the provided URL")
+    return detail[:limit]
+
+
 def run_yt_dlp_with_clients(base_args, url, preferred_clients=None, log_prefix="yt-dlp", **kwargs):
     """Try yt-dlp with multiple player clients, returning (result, client_used)."""
     clients = [None]
@@ -285,7 +319,15 @@ def run_yt_dlp_with_clients(base_args, url, preferred_clients=None, log_prefix="
         else:
             print(f"⚠️ {log_prefix}: client '{client_label}' exited with code {result.returncode}")
 
-    raise RuntimeError(f"yt-dlp failed for all clients ({', '.join((c or 'default') for c in clients)})")
+    client_summary = ", ".join((client or "default") for client in clients)
+    detail = summarize_yt_dlp_failure(
+        getattr(last_result, "stderr", ""),
+        url,
+    )
+    message = f"yt-dlp failed for all clients ({client_summary})"
+    if detail:
+        message = f"{message}: {detail}"
+    raise RuntimeError(message)
 
 # Cleanup configuration
 CLEANUP_INTERVAL = 300  # Run cleanup every 5 minutes
@@ -533,8 +575,12 @@ def extract_audio_bitrate_kbps(fmt, duration_seconds=None):
 
     return None
 
-# Temporary downloads path (in the project folder)
-temp_downloads_path = os.path.join(os.path.dirname(__file__), "temp_downloads")
+# Temporary downloads path (in the project folder by default). Tests and
+# managed deployments can isolate transient artifacts from the live instance.
+temp_downloads_path = os.environ.get(
+    "MEDIAKEEPA_TEMP_DOWNLOADS_DIR",
+    os.path.join(os.path.dirname(__file__), "temp_downloads"),
+)
 
 # Create temp folder if it doesn't exist
 if not os.path.exists(temp_downloads_path):
@@ -555,6 +601,24 @@ AUDIO_SEPARATOR_MODAL_APP = os.environ.get(
 AUDIO_SEPARATOR_MODAL_FUNCTION = os.environ.get(
     "AUDIO_SEPARATOR_MODAL_FUNCTION",
     "separate_audio",
+)
+AUDIO_SEPARATOR_CONTROL_PLANE_URL = os.environ.get(
+    "AUDIO_SEPARATOR_CONTROL_PLANE_URL",
+    "",
+).strip().rstrip("/")
+AUDIO_SEPARATOR_CONTROL_PLANE_APPLICATION = os.environ.get(
+    "AUDIO_SEPARATOR_CONTROL_PLANE_APPLICATION",
+    "mediakeepa",
+).strip()
+AUDIO_SEPARATOR_CONTROL_PLANE_WORKLOAD = os.environ.get(
+    "AUDIO_SEPARATOR_CONTROL_PLANE_WORKLOAD",
+    "separate-audio",
+).strip()
+AUDIO_SEPARATOR_CONTROL_PLANE_ESTIMATED_COST_USD = float(
+    os.environ.get("AUDIO_SEPARATOR_CONTROL_PLANE_ESTIMATED_COST_USD", "0.50")
+)
+AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS = int(
+    os.environ.get("AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS", str(60 * 30))
 )
 AUDIO_SEPARATOR_MODEL_DIR = Path(
     os.environ.get("AUDIO_SEPARATOR_MODEL_DIR", ROOT_DIR / "audio_separator_models")
@@ -614,6 +678,10 @@ MODAL_STEM_SPECS = (
 )
 
 
+class ControlPlaneUnavailableBeforeSubmission(RuntimeError):
+    """The control plane could not be reached before any run was submitted."""
+
+
 @lru_cache(maxsize=1)
 def get_modal_audio_separator_function():
     import modal
@@ -624,13 +692,25 @@ def get_modal_audio_separator_function():
     )
 
 
-def run_modal_audio_separation(job_id, input_path):
-    extension = Path(input_path).suffix.lstrip(".").lower()
-    with open(input_path, "rb") as audio_file:
-        audio_bytes = audio_file.read()
+@lru_cache(maxsize=1)
+def get_modal_control_plane_client():
+    if not AUDIO_SEPARATOR_CONTROL_PLANE_URL:
+        raise RuntimeError("AUDIO_SEPARATOR_CONTROL_PLANE_URL is not configured.")
+    try:
+        from modal_compute import Client
+    except ImportError:
+        sdk_source = ROOT_DIR / "modal-rotation" / "src"
+        if not sdk_source.is_dir():
+            raise RuntimeError(
+                "The Modal-Rotation SDK is unavailable. Initialize the modal-rotation component or install modal-compute-control."
+            )
+        sys.path.insert(0, str(sdk_source))
+        from modal_compute import Client
 
-    remote_function = get_modal_audio_separator_function()
-    archive_bytes = remote_function.remote(audio_bytes, extension)
+    return Client(AUDIO_SEPARATOR_CONTROL_PLANE_URL, request_timeout=180)
+
+
+def extract_modal_stem_archive(job_id, archive_bytes):
     if not isinstance(archive_bytes, bytes) or not archive_bytes:
         raise RuntimeError("Modal returned an empty separation result.")
 
@@ -649,6 +729,50 @@ def run_modal_audio_separation(job_id, input_path):
             stem_files[stem_name] = filename
 
     return stem_files
+
+
+def run_control_plane_audio_separation(job_id, input_path):
+    extension = Path(input_path).suffix.lstrip(".").lower()
+    with open(input_path, "rb") as audio_file:
+        audio_bytes = audio_file.read()
+
+    client = get_modal_control_plane_client()
+    try:
+        client.health()
+    except Exception as exc:
+        raise ControlPlaneUnavailableBeforeSubmission(str(exc)) from exc
+
+    submitted = client.run_binary(
+        AUDIO_SEPARATOR_CONTROL_PLANE_APPLICATION,
+        AUDIO_SEPARATOR_CONTROL_PLANE_WORKLOAD,
+        audio_bytes,
+        keyword="audio_bytes",
+        filename=Path(input_path).name,
+        content_type="application/octet-stream",
+        kwargs={"extension": extension},
+        estimated_cost_usd=AUDIO_SEPARATOR_CONTROL_PLANE_ESTIMATED_COST_USD,
+        timeout_seconds=AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS,
+        result_filename="mediakeepa-stems.zip",
+        result_content_type="application/zip",
+    )
+    run = client.wait(
+        submitted.id,
+        timeout=AUDIO_SEPARATOR_CONTROL_PLANE_TIMEOUT_SECONDS + 180,
+    )
+    if run.status.lower() != "succeeded":
+        raise RuntimeError(run.error or f"Modal control-plane run {run.id} ended as {run.status}.")
+    archive_bytes = client.download_artifact(run, timeout=180)
+    return extract_modal_stem_archive(job_id, archive_bytes)
+
+
+def run_modal_audio_separation(job_id, input_path):
+    extension = Path(input_path).suffix.lstrip(".").lower()
+    with open(input_path, "rb") as audio_file:
+        audio_bytes = audio_file.read()
+
+    remote_function = get_modal_audio_separator_function()
+    archive_bytes = remote_function.remote(audio_bytes, extension)
+    return extract_modal_stem_archive(job_id, archive_bytes)
 
 
 def run_local_audio_separation(job_id, input_path):
@@ -748,18 +872,49 @@ def run_audio_separation(job_id, input_path):
     try:
         stem_files = None
         processor = "local-demucs"
-        if AUDIO_SEPARATOR_BACKEND in {"auto", "modal"}:
+        if AUDIO_SEPARATOR_BACKEND not in {"auto", "control-plane", "modal", "local"}:
+            raise RuntimeError("AUDIO_SEPARATOR_BACKEND must be auto, control-plane, modal, or local.")
+
+        if AUDIO_SEPARATOR_BACKEND == "control-plane" and not AUDIO_SEPARATOR_CONTROL_PLANE_URL:
+            raise RuntimeError("AUDIO_SEPARATOR_CONTROL_PLANE_URL is required for the control-plane backend.")
+
+        if AUDIO_SEPARATOR_CONTROL_PLANE_URL and AUDIO_SEPARATOR_BACKEND in {"auto", "control-plane"}:
             update_audio_separator_job(
                 job_id,
                 status="loading_model",
                 progress=15,
-                message="Connecting to the quality GPU separator...",
+                message="Routing the audio workload across available Modal workspaces...",
             )
             try:
                 update_audio_separator_job(
                     job_id,
                     status="processing",
                     progress=35,
+                    message="Separating vocals and music through the Modal control plane...",
+                )
+                stem_files = run_control_plane_audio_separation(job_id, input_path)
+                processor = "modal-rotation-bs-roformer"
+            except ControlPlaneUnavailableBeforeSubmission as control_plane_error:
+                if AUDIO_SEPARATOR_BACKEND == "control-plane":
+                    raise
+                print(f"Modal control plane unavailable; trying the direct Modal backend: {control_plane_error}")
+            except Exception:
+                # Once submission may have begun, retrying through the direct
+                # backend could duplicate the same GPU workload.
+                raise
+
+        if stem_files is None and AUDIO_SEPARATOR_BACKEND in {"auto", "modal"}:
+            update_audio_separator_job(
+                job_id,
+                status="loading_model",
+                progress=20,
+                message="Connecting directly to the quality GPU separator...",
+            )
+            try:
+                update_audio_separator_job(
+                    job_id,
+                    status="processing",
+                    progress=40,
                     message="Separating vocals and music with BS-RoFormer on Modal GPU...",
                 )
                 stem_files = run_modal_audio_separation(job_id, input_path)
@@ -767,13 +922,7 @@ def run_audio_separation(job_id, input_path):
             except Exception as modal_error:
                 if AUDIO_SEPARATOR_BACKEND == "modal":
                     raise
-                print(f"Modal audio separation unavailable; using local fallback: {modal_error}")
-                update_audio_separator_job(
-                    job_id,
-                    status="loading_model",
-                    progress=20,
-                    message="GPU unavailable. Loading the local quality separator...",
-                )
+                print(f"Direct Modal audio separation unavailable; using local fallback: {modal_error}")
 
         if stem_files is None:
             update_audio_separator_job(
@@ -1204,6 +1353,12 @@ def perform_download(session_id, url, format_type, quality, output_template, bas
         
         threading.Thread(target=cleanup_error_progress, daemon=True).start()
 
+@app.route("/assets/<path:filename>")
+def serve_frontend_asset(filename):
+    """Serve Vite's nested hashed assets with a platform-neutral path."""
+    return send_from_directory(DIST_FOLDER / "assets", filename)
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_index(path):
@@ -1217,8 +1372,7 @@ def serve_index(path):
     requested_path = DIST_FOLDER / path
     if path and requested_path.exists() and requested_path.is_file():
         # Serve existing static asset
-        relative_path = os.path.relpath(requested_path, DIST_FOLDER)
-        return send_from_directory(DIST_FOLDER, relative_path)
+        return send_from_directory(DIST_FOLDER, path.replace("\\", "/"))
 
     return send_from_directory(DIST_FOLDER, 'index.html')
 

@@ -89,6 +89,8 @@ export function StemWaveform({
 }: StemWaveformProps) {
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const barRefs = useRef<Array<HTMLSpanElement | null>>([])
+  const playedBarRefs = useRef<Array<HTMLSpanElement | null>>([])
+  const timelineRef = useRef<HTMLDivElement | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const progressRef = useRef(0)
   const progress = duration > 0 ? clamp(currentTime / duration, 0, 1) : 0
@@ -101,6 +103,9 @@ export function StemWaveform({
         animationFrameRef.current = null
       }
       barRefs.current.forEach((bar) => {
+        if (bar) bar.style.transform = "scaleY(1)"
+      })
+      playedBarRefs.current.forEach((bar) => {
         if (bar) bar.style.transform = "scaleY(1)"
       })
     }
@@ -347,6 +352,8 @@ export function StemWaveform({
             )
 
         bar.style.transform = `scaleY(${scale.toFixed(3)})`
+        const playedBar = playedBarRefs.current[index]
+        if (playedBar) playedBar.style.transform = `scaleY(${scale.toFixed(3)})`
       })
 
       animationFrameRef.current = window.requestAnimationFrame(drawSpectrum)
@@ -357,7 +364,7 @@ export function StemWaveform({
   }, [analyser, isPlaying, response])
 
   const timeFromPointer = (event: MouseEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
+    const rect = timelineRef.current?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()
     const percentage = clamp((event.clientX - rect.left) / rect.width, 0, 1)
     return percentage * duration
   }
@@ -392,33 +399,51 @@ export function StemWaveform({
         onMouseLeave={() => setHoverTime(null)}
         onKeyDown={handleKeyDown}
       >
-        <div className="relative flex h-20 items-center gap-[2px] overflow-hidden sm:h-24">
-          {waveform.map((height, index) => {
-            const barPosition = (index + 0.5) / waveform.length
-            const hasPlayed = barPosition <= progress
-            const activeBar = Math.round(progress * (waveform.length - 1))
-            const distanceFromPlayhead = Math.abs(index - activeBar)
-            const isActive = isPlaying && distanceFromPlayhead <= 2
-
-            return (
+        <div ref={timelineRef} className="relative h-20 overflow-hidden sm:h-24">
+          <div className="absolute inset-0 flex items-center gap-[2px]">
+            {waveform.map((height, index) => (
               <span
                 key={index}
                 ref={(element) => { barRefs.current[index] = element }}
-                className={`min-w-px flex-1 rounded-full transition-[background-color,opacity] duration-75 will-change-transform ${hasPlayed || isActive ? "bg-foreground" : "bg-foreground/20"}`}
+                className="min-w-px flex-1 rounded-full bg-foreground/20 opacity-55 will-change-transform"
                 style={{
                   height: `${Math.round(height * 48 + 18)}%`,
                   transformOrigin: "center",
-                  opacity: isActive ? 1 : hasPlayed ? 0.92 : 0.55,
                 }}
               />
-            )
-          })}
+            ))}
+          </div>
+
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 flex items-center gap-[2px] transition-[clip-path] duration-75 ease-linear motion-reduce:transition-none"
+            style={{ clipPath: `inset(0 ${(1 - progress) * 100}% 0 0)` }}
+          >
+            {waveform.map((height, index) => (
+              <span
+                key={index}
+                ref={(element) => { playedBarRefs.current[index] = element }}
+                className="min-w-px flex-1 rounded-full bg-foreground opacity-95 will-change-transform"
+                style={{
+                  height: `${Math.round(height * 48 + 18)}%`,
+                  transformOrigin: "center",
+                }}
+              />
+            ))}
+          </div>
 
           {hoverTime !== null && duration > 0 && (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute top-0 -translate-x-1/2 rounded-md bg-foreground px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-background shadow-sm"
-              style={{ left: `${(hoverTime / duration) * 100}%` }}
+              className="pointer-events-none absolute top-0 rounded-md bg-foreground px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-background shadow-sm"
+              style={{
+                left: `${(hoverTime / duration) * 100}%`,
+                transform: hoverTime / duration < 0.08
+                  ? "translateX(0)"
+                  : hoverTime / duration > 0.92
+                    ? "translateX(-100%)"
+                    : "translateX(-50%)",
+              }}
             >
               {formatAudioTime(hoverTime)}
             </span>

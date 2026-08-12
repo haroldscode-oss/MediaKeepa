@@ -78,11 +78,18 @@ function stemIcon(name: string) {
   return MusicNote
 }
 
+function isPlaybackInterruption(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+    || error instanceof Error && error.message.includes("play() request was interrupted")
+}
+
 export function AudioSeparatorPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioGraphsRef = useRef<Record<string, StemAudioGraph>>({})
+  const playbackRequestRef = useRef(0)
+  const intendsToPlayRef = useRef(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [status, setStatus] = useState<SeparatorStatus | null>(null)
@@ -97,6 +104,16 @@ export function AudioSeparatorPage() {
   const [analysers, setAnalysers] = useState<Record<string, AnalyserNode | null>>({})
 
   const isProcessing = isUploading || Boolean(jobId && status?.status !== "completed" && status?.status !== "error")
+
+  const haltPlayback = useCallback(() => {
+    playbackRequestRef.current += 1
+    intendsToPlayRef.current = false
+    Object.values(audioRefs.current).forEach((audio) => {
+      if (!audio) return
+      audio.pause()
+      audio.playbackRate = 1
+    })
+  }, [])
 
   const disposeAudioGraph = useCallback(() => {
     Object.values(audioGraphsRef.current).forEach((graph) => {
@@ -195,7 +212,7 @@ export function AudioSeparatorPage() {
 
   useEffect(() => {
     return () => {
-      Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+      haltPlayback()
       Object.values(audioGraphsRef.current).forEach((graph) => {
         graph.source.disconnect()
         graph.analyser.disconnect()
@@ -203,7 +220,7 @@ export function AudioSeparatorPage() {
       const context = audioContextRef.current
       if (context && context.state !== "closed") void context.close()
     }
-  }, [])
+  }, [haltPlayback])
 
   useEffect(() => {
     if (playingStems.length === 0) return
@@ -254,7 +271,7 @@ export function AudioSeparatorPage() {
       return
     }
 
-    Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+    haltPlayback()
     disposeAudioGraph()
     setSelectedFile(file)
     setJobId(null)
@@ -268,7 +285,7 @@ export function AudioSeparatorPage() {
   }
 
   const reset = () => {
-    Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+    haltPlayback()
     disposeAudioGraph()
     audioRefs.current = {}
     setSelectedFile(null)
@@ -307,16 +324,15 @@ export function AudioSeparatorPage() {
 
   const toggleAll = async () => {
     const allPlaying = stems.length > 0 && stems.every((stem) => playingStems.includes(stem.name))
-    if (allPlaying) {
-      stems.forEach((stem) => {
-        const audio = audioRefs.current[stem.name]
-        if (!audio) return
-        audio.pause()
-        audio.playbackRate = 1
-      })
+    if (intendsToPlayRef.current || allPlaying) {
+      haltPlayback()
       setPlayingStems([])
       return
     }
+
+    const requestId = playbackRequestRef.current + 1
+    playbackRequestRef.current = requestId
+    intendsToPlayRef.current = true
 
     const referenceStemName = stems[0]?.name
     const referenceAudio = referenceStemName ? audioRefs.current[referenceStemName] : null
@@ -338,10 +354,19 @@ export function AudioSeparatorPage() {
       const context = audioContextRef.current
       if (context?.state === "suspended") await context.resume()
 
-      await Promise.all(stems.map(async (stem) => {
+      if (requestId !== playbackRequestRef.current || !intendsToPlayRef.current) return
+
+      setPlayingStems(stems.map((stem) => stem.name))
+      const playResults = await Promise.allSettled(stems.map((stem) => {
         const audio = audioRefs.current[stem.name]
-        if (audio?.paused) await audio.play()
+        if (!audio) return Promise.reject(new Error(`${stem.label} audio is unavailable`))
+        return audio.paused ? audio.play() : Promise.resolve()
       }))
+
+      if (requestId !== playbackRequestRef.current || !intendsToPlayRef.current) return
+
+      const failedPlayback = playResults.find((result) => result.status === "rejected")
+      if (failedPlayback?.status === "rejected") throw failedPlayback.reason
 
       const synchronizedTime = Math.max(
         referenceTime,
@@ -351,11 +376,14 @@ export function AudioSeparatorPage() {
         const audio = audioRefs.current[stem.name]
         if (audio) audio.currentTime = synchronizedTime
       })
-      setPlayingStems(stems.map((stem) => stem.name))
     } catch (error) {
-      stems.forEach((stem) => audioRefs.current[stem.name]?.pause())
+      if (requestId !== playbackRequestRef.current || !intendsToPlayRef.current) return
+
+      haltPlayback()
       setPlayingStems([])
-      toast.error(error instanceof Error ? error.message : "Unable to play the separated audio")
+      if (!isPlaybackInterruption(error)) {
+        toast.error(error instanceof Error ? error.message : "Unable to play the separated audio")
+      }
     }
   }
 
@@ -456,7 +484,7 @@ export function AudioSeparatorPage() {
                   </motion.div>
                 ) : stems.length === 0 ? (
                   <motion.div key="ready" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                    <Button onClick={startSeparation} size="lg" className="h-12 w-full bg-black text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-white">Separate Audio</Button>
+                    <Button onClick={startSeparation} size="lg" className="h-12 w-full bg-foreground text-background hover:bg-foreground/90">Separate Audio</Button>
                   </motion.div>
                 ) : (
                   <motion.div key="complete" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm font-medium">
@@ -480,7 +508,7 @@ export function AudioSeparatorPage() {
                       const duration = durations[stem.name] ?? 0
 
                       return (
-                        <div key={stem.name} className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-4 border-b border-border py-5 last:border-b-0 lg:grid-cols-[120px_190px_minmax(0,1fr)_auto]">
+                        <div key={stem.name} className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-center gap-4 border-b border-border py-5 last:border-b-0 lg:grid-cols-[120px_210px_minmax(0,1fr)_auto]">
                           <div className="flex items-center gap-3">
                             <Icon size={22} weight="fill" />
                             <span className="font-semibold">{stem.label}</span>
@@ -525,10 +553,10 @@ export function AudioSeparatorPage() {
                               }}
                               onEnded={() => {
                                 const endTimes: Record<string, number> = {}
+                                haltPlayback()
                                 stems.forEach((currentStem) => {
                                   const audio = audioRefs.current[currentStem.name]
                                   if (!audio) return
-                                  audio.pause()
                                   if (Number.isFinite(audio.duration)) {
                                     audio.currentTime = audio.duration
                                     endTimes[currentStem.name] = audio.duration
@@ -543,16 +571,16 @@ export function AudioSeparatorPage() {
                       )
                     })}
 
-                    <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
                       <Button variant="outline" onClick={() => void toggleAll()} className="gap-2">
                         {allPlaying ? <Pause size={19} weight="fill" /> : <Play size={19} weight="fill" />}
                         {allPlaying ? "Pause" : "Play"}
                       </Button>
                       {archiveUrl && (
-                        <Button asChild className="gap-2 bg-black text-white hover:bg-black dark:bg-black dark:text-white dark:hover:bg-black">
+                        <Button asChild className="gap-2 bg-foreground text-background hover:bg-foreground/90">
                           <a href={archiveUrl} download>
                             <DownloadSimple size={18} weight="bold" />
-                            Download both tracks
+                            Download
                           </a>
                         </Button>
                       )}

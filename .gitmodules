@@ -1,0 +1,3 @@
+[submodule "modal-rotation"]
+	path = modal-rotation
+	url = https://github.com/haroldscode-oss/Modal-Rotation.git

@@ -62,13 +62,27 @@ def _find_output(
     expected_prefix: str,
     output_dir: Path,
 ) -> Path:
+    candidates: list[Path] = []
     for output_file in output_files:
         path = Path(output_file)
-        if path.name.lower().startswith(expected_prefix.lower()):
-            resolved_path = path if path.is_absolute() else output_dir / path
-            if resolved_path.is_file():
-                return resolved_path
-    raise RuntimeError(f"The separator did not produce {expected_prefix}.")
+        resolved_path = path if path.is_absolute() else output_dir / path
+        if resolved_path.is_file() and resolved_path not in candidates:
+            candidates.append(resolved_path)
+    for path in output_dir.glob("*.wav"):
+        if path.is_file() and path not in candidates:
+            candidates.append(path)
+
+    tokens = {
+        "vocals": ("vocal", "vocals"),
+        "music": ("music", "instrumental", "accompaniment"),
+    }.get(expected_prefix.lower(), (expected_prefix.lower(),))
+    for path in candidates:
+        lowered = path.name.lower()
+        if any(token in lowered for token in tokens):
+            return path
+
+    available = ", ".join(path.name for path in candidates) or "none"
+    raise RuntimeError(f"The separator did not produce {expected_prefix}; available outputs: {available}.")
 
 
 @app.function(
@@ -107,9 +121,11 @@ def separate_audio(audio_bytes: bytes, extension: str) -> bytes:
         )
 
         stem_paths = {
-            "vocals.wav": _find_output(vocal_outputs, "vocals.", output_dir),
-            "music.wav": _find_output(vocal_outputs, "music.", output_dir),
+            "vocals.wav": _find_output(vocal_outputs, "vocals", output_dir),
+            "music.wav": _find_output(vocal_outputs, "music", output_dir),
         }
+        if stem_paths["vocals.wav"] == stem_paths["music.wav"]:
+            raise RuntimeError("The separator resolved vocals and music to the same output file.")
 
         archive_path = Path(temp_dir) / "mediakeepa-stems.zip"
         with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
