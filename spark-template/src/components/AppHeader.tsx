@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom"
-import { DownloadSimple, Waveform } from "@phosphor-icons/react"
+import { DownloadSimple, Image, Waveform } from "@phosphor-icons/react"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { cn } from "@/lib/utils"
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 const navItems = [
   { to: "/downloader", label: "Media Downloader", icon: DownloadSimple },
   { to: "/audio-separator", label: "Audio Separator", icon: Waveform },
+  { to: "/background-remover", label: "Background Remover", icon: Image },
 ]
 
 export function AppHeader() {

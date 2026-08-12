@@ -1282,6 +1282,248 @@ def run_audio_separation(job_id, input_path):
         except OSError as exc:
             print(f"Could not clean audio separator upload {input_path}: {exc}")
 
+
+# Image-only Background Remover. Access to the self-hosted RMBG-2.0 weights is
+# enforced by Hugging Face's gated repository and its accepted model terms.
+BACKGROUND_REMOVER_MAX_BYTES = 20 * 1024 * 1024
+BACKGROUND_REMOVER_MAX_DIMENSION = 16000
+BACKGROUND_REMOVER_MAX_PIXELS = 64_000_000
+BACKGROUND_REMOVER_ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+BACKGROUND_REMOVER_BACKEND = os.environ.get("BACKGROUND_REMOVER_BACKEND", "auto").strip().lower()
+BACKGROUND_REMOVER_MODAL_APP = os.environ.get(
+    "BACKGROUND_REMOVER_MODAL_APP",
+    "mediakeepa-background-remover",
+).strip()
+BACKGROUND_REMOVER_MODAL_FUNCTION = os.environ.get(
+    "BACKGROUND_REMOVER_MODAL_FUNCTION",
+    "remove_background",
+).strip()
+BACKGROUND_REMOVER_CONTROL_PLANE_URL = os.environ.get(
+    "BACKGROUND_REMOVER_CONTROL_PLANE_URL",
+    "",
+).strip().rstrip("/")
+BACKGROUND_REMOVER_CONTROL_PLANE_APPLICATION = os.environ.get(
+    "BACKGROUND_REMOVER_CONTROL_PLANE_APPLICATION",
+    "mediakeepa",
+).strip()
+BACKGROUND_REMOVER_CONTROL_PLANE_WORKLOAD = os.environ.get(
+    "BACKGROUND_REMOVER_CONTROL_PLANE_WORKLOAD",
+    "remove-background",
+).strip()
+BACKGROUND_REMOVER_CONTROL_PLANE_ESTIMATED_COST_USD = float(
+    os.environ.get("BACKGROUND_REMOVER_CONTROL_PLANE_ESTIMATED_COST_USD", "0.05")
+)
+BACKGROUND_REMOVER_CONTROL_PLANE_TIMEOUT_SECONDS = int(
+    os.environ.get("BACKGROUND_REMOVER_CONTROL_PLANE_TIMEOUT_SECONDS", "300")
+)
+
+background_remover_jobs = {}
+background_remover_jobs_lock = threading.Lock()
+background_remover_executor = ThreadPoolExecutor(max_workers=2)
+atexit.register(lambda: background_remover_executor.shutdown(wait=False))
+
+
+def update_background_remover_job(job_id, **changes):
+    with background_remover_jobs_lock:
+        job = background_remover_jobs.get(job_id)
+        if job is not None:
+            job.update(changes)
+
+
+def normalize_background_remover_image(input_path):
+    """Validate an uploaded image and return an orientation-corrected PNG."""
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(input_path) as source:
+            source.verify()
+        with Image.open(input_path) as source:
+            image = ImageOps.exif_transpose(source)
+            width, height = image.size
+            if width < 1 or height < 1:
+                raise ValueError("The uploaded image has invalid dimensions.")
+            if width > BACKGROUND_REMOVER_MAX_DIMENSION or height > BACKGROUND_REMOVER_MAX_DIMENSION:
+                raise ValueError("Images must be 16,000 pixels or smaller on each side.")
+            if width * height > BACKGROUND_REMOVER_MAX_PIXELS:
+                raise ValueError("Images must contain 64 megapixels or fewer.")
+            image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+            output = io.BytesIO()
+            image.save(output, format="PNG", optimize=True)
+            return output.getvalue(), width, height
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Choose a valid JPG, PNG, or WebP image.") from exc
+
+
+def validate_background_remover_result(image_bytes):
+    """Normalize provider output to a non-empty RGBA PNG."""
+    from PIL import Image, UnidentifiedImageError
+
+    if not isinstance(image_bytes, bytes) or not image_bytes:
+        raise RuntimeError("The background remover returned an empty result.")
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.load()
+            normalized = image.convert("RGBA")
+            output = io.BytesIO()
+            normalized.save(output, format="PNG", optimize=True)
+            return output.getvalue(), normalized.size
+    except (UnidentifiedImageError, OSError) as exc:
+        raise RuntimeError("The background remover returned an invalid image.") from exc
+
+
+@lru_cache(maxsize=1)
+def get_modal_background_remover_function():
+    import modal
+
+    return modal.Function.from_name(
+        BACKGROUND_REMOVER_MODAL_APP,
+        BACKGROUND_REMOVER_MODAL_FUNCTION,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_background_control_plane_client():
+    if not BACKGROUND_REMOVER_CONTROL_PLANE_URL:
+        raise RuntimeError("BACKGROUND_REMOVER_CONTROL_PLANE_URL is not configured.")
+    try:
+        from modal_compute import Client
+    except ImportError:
+        sdk_source = ROOT_DIR / "modal-rotation" / "src"
+        if not sdk_source.is_dir():
+            raise RuntimeError("The Modal-Rotation SDK is unavailable.")
+        sys.path.insert(0, str(sdk_source))
+        from modal_compute import Client
+
+    return Client(BACKGROUND_REMOVER_CONTROL_PLANE_URL, request_timeout=180)
+
+
+def run_modal_background_removal(image_bytes):
+    remote_function = get_modal_background_remover_function()
+    return remote_function.remote(image_bytes)
+
+
+def run_control_plane_background_removal(image_bytes):
+    client = get_background_control_plane_client()
+    try:
+        client.health()
+    except Exception as exc:
+        raise ControlPlaneUnavailableBeforeSubmission(str(exc)) from exc
+
+    submitted = None
+    try:
+        submitted = client.run_binary(
+            BACKGROUND_REMOVER_CONTROL_PLANE_APPLICATION,
+            BACKGROUND_REMOVER_CONTROL_PLANE_WORKLOAD,
+            image_bytes,
+            keyword="image_bytes",
+            filename="mediakeepa-input.png",
+            content_type="image/png",
+            estimated_cost_usd=BACKGROUND_REMOVER_CONTROL_PLANE_ESTIMATED_COST_USD,
+            timeout_seconds=BACKGROUND_REMOVER_CONTROL_PLANE_TIMEOUT_SECONDS,
+            result_filename="mediakeepa-background-removed.png",
+            result_content_type="image/png",
+        )
+    except Exception as exc:
+        if submitted is None:
+            raise ControlPlaneUnavailableBeforeSubmission(str(exc)) from exc
+        raise
+
+    run = client.wait(
+        submitted.id,
+        timeout=BACKGROUND_REMOVER_CONTROL_PLANE_TIMEOUT_SECONDS + 120,
+    )
+    if run.status.lower() != "succeeded":
+        raise RuntimeError(run.error or f"Modal control-plane run {run.id} ended as {run.status}.")
+    return client.download_artifact(run, timeout=180)
+
+
+def complete_background_remover_job(job_id, result_bytes, original_name, processor):
+    normalized_result, (width, height) = validate_background_remover_result(result_bytes)
+    safe_stem = sanitize_filename(Path(original_name).stem) or "image"
+    filename = f"{job_id}_{safe_stem}_background_removed.png"
+    output_path = os.path.join(temp_downloads_path, filename)
+    with open(output_path, "wb") as output:
+        output.write(normalized_result)
+
+    update_background_remover_job(
+        job_id,
+        status="completed",
+        progress=100,
+        message="Your transparent PNG is ready.",
+        width=width,
+        height=height,
+        filename=filename,
+        preview_url=f"/api/background-remover/file/{job_id}/{filename}",
+        download_url=f"/api/background-remover/file/{job_id}/{filename}?download=1",
+        allowed_files={filename},
+        processor=processor,
+    )
+
+
+def run_background_removal(job_id, input_path, original_name):
+    try:
+        update_background_remover_job(
+            job_id,
+            status="processing",
+            progress=15,
+            message="Preparing your image...",
+        )
+        image_bytes, width, height = normalize_background_remover_image(input_path)
+        update_background_remover_job(job_id, width=width, height=height, progress=30)
+
+        if BACKGROUND_REMOVER_BACKEND not in {"auto", "control-plane", "modal"}:
+            raise RuntimeError("BACKGROUND_REMOVER_BACKEND must be auto, control-plane, or modal.")
+
+        result_bytes = None
+        processor = None
+
+        if (
+            result_bytes is None
+            and BACKGROUND_REMOVER_CONTROL_PLANE_URL
+            and BACKGROUND_REMOVER_BACKEND in {"auto", "control-plane"}
+        ):
+            update_background_remover_job(
+                job_id,
+                progress=45,
+                message="Routing RMBG-2.0 across available Modal workspaces...",
+            )
+            try:
+                result_bytes = run_control_plane_background_removal(image_bytes)
+                processor = "modal-rotation-rmbg-2.0"
+            except ControlPlaneUnavailableBeforeSubmission as exc:
+                if BACKGROUND_REMOVER_BACKEND == "control-plane":
+                    raise
+                print(f"Background-remover control plane unavailable; trying direct Modal: {exc}")
+
+        if result_bytes is None and BACKGROUND_REMOVER_BACKEND in {"auto", "modal"}:
+            update_background_remover_job(
+                job_id,
+                progress=50,
+                message="Removing the background with RMBG-2.0 on Modal GPU...",
+            )
+            result_bytes = run_modal_background_removal(image_bytes)
+            processor = "modal-l4-rmbg-2.0"
+
+        if result_bytes is None:
+            raise RuntimeError("No Background Remover backend is configured.")
+
+        update_background_remover_job(job_id, progress=90, message="Finalizing transparent PNG...")
+        complete_background_remover_job(job_id, result_bytes, original_name, processor)
+    except Exception as exc:
+        print(f"Background remover job {job_id} failed: {exc}")
+        update_background_remover_job(
+            job_id,
+            status="error",
+            progress=0,
+            message=str(exc),
+        )
+    finally:
+        try:
+            if os.path.isfile(input_path):
+                os.remove(input_path)
+        except OSError as exc:
+            print(f"Could not clean Background Remover upload {input_path}: {exc}")
+
 # Clean up any leftover files from previous runs on startup (always run this)
 try:
     if os.path.exists(temp_downloads_path):
@@ -1818,6 +2060,96 @@ def audio_separator_file(job_id, filename):
         filename,
         as_attachment=request.args.get("download") == "1",
         conditional=True,
+    )
+
+
+@app.route("/api/background-remover", methods=["POST"])
+@limiter.limit("20 per hour")
+def start_background_remover():
+    if request.content_length and request.content_length > BACKGROUND_REMOVER_MAX_BYTES + (1024 * 1024):
+        return jsonify({"status": "error", "message": "Images must be 20 MB or smaller."}), 413
+
+    upload = request.files.get("image")
+    if upload is None or not upload.filename:
+        return jsonify({"status": "error", "message": "Choose an image to process."}), 400
+
+    safe_name = secure_filename(upload.filename)
+    extension = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    if extension not in BACKGROUND_REMOVER_ALLOWED_EXTENSIONS:
+        return jsonify({
+            "status": "error",
+            "message": "Use a JPG, PNG, or WebP image.",
+        }), 400
+
+    job_id = uuid.uuid4().hex
+    input_path = os.path.join(temp_downloads_path, f"{job_id}_background_input.{extension}")
+    upload.save(input_path)
+    file_size = os.path.getsize(input_path)
+    if file_size == 0:
+        os.remove(input_path)
+        return jsonify({"status": "error", "message": "The uploaded image is empty."}), 400
+    if file_size > BACKGROUND_REMOVER_MAX_BYTES:
+        os.remove(input_path)
+        return jsonify({"status": "error", "message": "Images must be 20 MB or smaller."}), 413
+
+    try:
+        _image_bytes, width, height = normalize_background_remover_image(input_path)
+    except ValueError as exc:
+        os.remove(input_path)
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+    with background_remover_jobs_lock:
+        background_remover_jobs[job_id] = {
+            "status": "queued",
+            "progress": 5,
+            "message": "Your image is queued for background removal.",
+            "created_at": time.time(),
+            "original_name": safe_name,
+            "width": width,
+            "height": height,
+            "allowed_files": set(),
+        }
+
+    background_remover_executor.submit(
+        run_background_removal,
+        job_id,
+        input_path,
+        safe_name,
+    )
+    return jsonify({"status": "queued", "job_id": job_id}), 202
+
+
+@app.route("/api/background-remover/status/<job_id>")
+@limiter.exempt
+def background_remover_status(job_id):
+    with background_remover_jobs_lock:
+        job = background_remover_jobs.get(job_id)
+        if job is None:
+            return jsonify({"status": "error", "message": "Background removal job not found."}), 404
+        public_job = {
+            key: value
+            for key, value in job.items()
+            if key not in {"allowed_files", "created_at", "original_name"}
+        }
+    return jsonify(public_job)
+
+
+@app.route("/api/background-remover/file/<job_id>/<filename>")
+@limiter.exempt
+def background_remover_file(job_id, filename):
+    with background_remover_jobs_lock:
+        job = background_remover_jobs.get(job_id)
+        allowed_files = set(job.get("allowed_files", set())) if job else set()
+
+    if filename not in allowed_files:
+        return jsonify({"status": "error", "message": "Processed image not found."}), 404
+
+    return send_from_directory(
+        temp_downloads_path,
+        filename,
+        as_attachment=request.args.get("download") == "1",
+        conditional=True,
+        mimetype="image/png",
     )
 
 @app.route("/download", methods=["POST"])

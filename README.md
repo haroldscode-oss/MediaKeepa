@@ -8,6 +8,8 @@ Deploy `modal_audio_separator.py` with `modal deploy modal_audio_separator.py` a
 
 MediaKeepa can also route separation through the bundled `modal-rotation` control plane. Initialize the component with `git submodule update --init modal-rotation`, configure its connected workspaces and the logical `mediakeepa / separate-audio` workload, then set `AUDIO_SEPARATOR_CONTROL_PLANE_URL=http://localhost:8765`. In `auto` mode, MediaKeepa tries the control plane first, direct Modal second, and local Demucs last. See [MODAL_ROTATION_INTEGRATION.md](MODAL_ROTATION_INTEGRATION.md) for setup and security boundaries.
 
+The image-only **Background Remover** accepts JPG, PNG, and WebP uploads and returns a full-resolution transparent PNG using Bria RMBG-2.0. For self-hosting, accept the model terms on Hugging Face, create a Modal secret named `MediaKeepa_backgroundremover` containing `HF_TOKEN`, and deploy `modal_background_remover.py`. Run `modal run modal_background_remover.py::download_weights` once to prefetch the gated weights into the persistent `mediakeepa-background-remover` Modal volume; normal requests also populate that cache automatically if needed. The self-hosted weights are non-commercial unless you have a separate Bria agreement.
+
 ## 🚀 Quick Start
 
 ### Start MediaKeepa

@@ -37,10 +37,12 @@ class FrontendRouteTests(unittest.TestCase):
                 asset_response.close()
 
     def test_spa_route_returns_the_frontend_shell(self) -> None:
-        response = self.client.get("/audio-separator")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('<div id="root"></div>', response.get_data(as_text=True))
-        response.close()
+        for route in ("/audio-separator", "/background-remover"):
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('<div id="root"></div>', response.get_data(as_text=True))
+                response.close()
 
 
 if __name__ == "__main__":

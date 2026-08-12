@@ -14,6 +14,7 @@ import { RecentUrls, addRecentUrl } from "@/components/RecentUrls"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
 import { AudioSeparatorPage } from "@/pages/AudioSeparatorPage"
+import { BackgroundRemoverPage } from "@/pages/BackgroundRemoverPage"
 import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
@@ -1374,7 +1375,8 @@ function PersistentPages() {
   const { pathname } = useLocation()
   const isDownloader = pathname === "/" || pathname === "/downloader"
   const isAudioSeparator = pathname === "/audio-separator"
-  const isToolPage = isDownloader || isAudioSeparator
+  const isBackgroundRemover = pathname === "/background-remover"
+  const isToolPage = isDownloader || isAudioSeparator || isBackgroundRemover
 
   return (
     <>
@@ -1384,6 +1386,10 @@ function PersistentPages() {
 
       <section hidden={!isAudioSeparator}>
         <AudioSeparatorPage />
+      </section>
+
+      <section hidden={!isBackgroundRemover}>
+        <BackgroundRemoverPage />
       </section>
 
       {!isToolPage && (
