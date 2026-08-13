@@ -1645,6 +1645,7 @@ def activate_compute_pool_routing():
 
 # Video Enhancer intentionally has no local or wrapper fallback. Every preview
 # and full-video job is routed to MediaKeepa's direct SeedVR2 Modal deployment.
+VIDEO_ENHANCER_WORKER_PROTOCOL = "seedvr2-oom-v2"
 VIDEO_ENHANCER_MAX_BYTES = 512 * 1024 * 1024
 VIDEO_ENHANCER_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 VIDEO_ENHANCER_ALLOWED_EXTENSIONS = {"mp4", "mov", "m4v", "mkv", "webm"}
@@ -1746,7 +1747,11 @@ def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height
             keyword="frame_bytes" if is_preview else "video_bytes",
             filename="selected-frame.png" if is_preview else "source-video.mp4",
             content_type="image/png" if is_preview else "video/mp4",
-            kwargs={"output_width": output_width, "output_height": output_height},
+            kwargs={
+                "output_width": output_width,
+                "output_height": output_height,
+                "worker_protocol": VIDEO_ENHANCER_WORKER_PROTOCOL,
+            },
             estimated_cost_usd=estimated_cost,
             timeout_seconds=2700 if is_preview else VIDEO_ENHANCER_TIMEOUT_SECONDS,
             result_filename="mediakeepa-preview.png" if is_preview else "mediakeepa-enhanced.mp4",

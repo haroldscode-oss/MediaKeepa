@@ -35,7 +35,7 @@ type EnhancementJob = {
 type ComputeAccount = {
   connected?: boolean
   health?: string
-  setupStatus?: string
+  setupStatus?: "setting-up" | "ready" | "failed" | "outdated"
   apps?: Array<Record<string, unknown>>
   setupTools?: Record<string, string>
 }
@@ -145,7 +145,7 @@ export function VideoEnhancerPage() {
         const payload = await readApiResponse<{ accounts?: ComputeAccount[] }>(response)
         if (!response.ok) throw new Error("Compute unavailable")
         const ready = (payload.accounts || []).some((account) => {
-          if (!account.connected || account.setupStatus === "setting-up" || account.setupStatus === "failed") return false
+          if (!account.connected || ["setting-up", "failed", "outdated"].includes(account.setupStatus || "")) return false
           return account.setupTools?.["enhance-video"] === "ready"
             || (account.apps || []).some((app) => JSON.stringify(app).toLowerCase().includes("mediakeepa-video-enhancer"))
         })

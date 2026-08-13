@@ -52,11 +52,11 @@ type ComputeAccount = {
   creditRemaining?: number | null
   apps?: ModalApp[]
   errors?: string[]
-  setupStatus?: "setting-up" | "ready" | "failed"
+  setupStatus?: "setting-up" | "ready" | "failed" | "outdated"
   setupStage?: string
   setupError?: string | null
   setupUpdatedAt?: string | null
-  setupTools?: Record<string, "setting-up" | "ready" | "failed">
+  setupTools?: Record<string, "setting-up" | "ready" | "failed" | "outdated">
 }
 
 type ComputeStatus = {
@@ -262,6 +262,9 @@ export function ComputePage() {
       if (setupTool === "ready") return { ready: true, label: "Ready" }
       return { ready: false, label: "Setup failed" }
     }
+    if (account.setupStatus === "outdated") {
+      if (tool.slug === "enhance-video") return { ready: false, label: "Update required" }
+    }
     if (!isBound(account.id, tool.slug)) return { ready: false, label: "Link missing" }
     if (account.health === "not-refreshed") return { ready: false, label: "Checking" }
     if (!["healthy", "degraded"].includes(account.health || "")) return { ready: false, label: "Connection issue" }
@@ -272,7 +275,7 @@ export function ComputePage() {
   }, [isBound])
 
   const highestCreditId = useMemo(() => [...accounts]
-    .filter((account) => account.creditRemaining != null && ["healthy", "degraded"].includes(account.health || ""))
+    .filter((account) => account.creditRemaining != null && !["setting-up", "failed", "outdated"].includes(account.setupStatus || "") && ["healthy", "degraded"].includes(account.health || ""))
     .sort((left, right) => (right.creditRemaining || 0) - (left.creditRemaining || 0))[0]?.id, [accounts])
 
   const totalJobPages = Math.max(1, Math.ceil(jobs.length / JOBS_PER_PAGE))
@@ -544,7 +547,7 @@ export function ComputePage() {
             </div>
             <div className="grid gap-3">
               {accounts.map((account) => {
-                const needsVideoSetup = account.setupStatus !== "setting-up" && !appIsDeployed(account, "mediakeepa-video-enhancer")
+                const needsVideoSetup = account.setupStatus === "outdated" || (account.setupStatus !== "setting-up" && !appIsDeployed(account, "mediakeepa-video-enhancer"))
                 return (
                 <Card key={account.id}>
                   <CardContent className="space-y-4 p-5 sm:p-6">
@@ -557,16 +560,16 @@ export function ComputePage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="truncate font-semibold">{account.label}</h3>
                             {account.id === highestCreditId && account.setupStatus !== "setting-up" && <Badge variant="outline">Highest credit</Badge>}
-                            <Badge variant="outline" className={cn("gap-1", account.setupStatus === "ready" && ["healthy", "degraded"].includes(account.health || "") && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", account.setupStatus === "failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>
-                              {account.setupStatus === "setting-up" ? <ArrowClockwise size={13} className="animate-spin" /> : account.setupStatus === "failed" ? <WarningCircle size={13} weight="fill" /> : ["healthy", "degraded"].includes(account.health || "") ? <CheckCircle size={13} weight="fill" /> : <WarningCircle size={13} weight="fill" />}
-                              {account.setupStatus === "setting-up" ? "Setting up" : account.setupStatus === "failed" ? "Setup failed" : ["healthy", "degraded"].includes(account.health || "") ? "Verified" : account.health === "not-refreshed" ? "Checking" : "Attention needed"}
+                            <Badge variant="outline" className={cn("gap-1", account.setupStatus === "ready" && ["healthy", "degraded"].includes(account.health || "") && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", account.setupStatus === "outdated" && "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200", account.setupStatus === "failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>
+                              {account.setupStatus === "setting-up" ? <ArrowClockwise size={13} className="animate-spin" /> : account.setupStatus === "failed" || account.setupStatus === "outdated" ? <WarningCircle size={13} weight="fill" /> : ["healthy", "degraded"].includes(account.health || "") ? <CheckCircle size={13} weight="fill" /> : <WarningCircle size={13} weight="fill" />}
+                              {account.setupStatus === "setting-up" ? "Setting up" : account.setupStatus === "failed" ? "Setup failed" : account.setupStatus === "outdated" ? "Update required" : ["healthy", "degraded"].includes(account.health || "") ? "Verified" : account.health === "not-refreshed" ? "Checking" : "Attention needed"}
                             </Badge>
                           </div>
-                          <p className="truncate text-sm text-muted-foreground">{account.setupStatus === "setting-up" ? account.setupStage || "Setting up in the background" : account.setupStatus === "failed" ? "Setup needs attention" : formatCredit(account.creditRemaining)}{account.workspaceName ? ` · Modal workspace: ${account.workspaceName}` : ""}</p>
+                          <p className="truncate text-sm text-muted-foreground">{account.setupStatus === "setting-up" ? account.setupStage || "Setting up in the background" : account.setupStatus === "failed" ? "Setup needs attention" : account.setupStatus === "outdated" ? account.setupStage || "Video Enhancer update required" : formatCredit(account.creditRemaining)}{account.workspaceName ? ` · Modal workspace: ${account.workspaceName}` : ""}</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {needsVideoSetup && <Button variant="outline" size="sm" onClick={() => void setupExistingAccount(account)} disabled={settingUpId === account.id} className="gap-2"><FilmSlate size={16} weight="fill" />{settingUpId === account.id ? "Starting..." : "Set up Video Enhancer"}</Button>}
+                        {needsVideoSetup && <Button variant="outline" size="sm" onClick={() => void setupExistingAccount(account)} disabled={settingUpId === account.id} className="gap-2"><FilmSlate size={16} weight="fill" />{settingUpId === account.id ? "Starting..." : account.setupStatus === "outdated" ? "Update Video Enhancer" : "Set up Video Enhancer"}</Button>}
                         <AlertDialog>
                         <AlertDialogTrigger asChild><Button variant="ghost" size="sm" disabled={account.setupStatus === "setting-up"} className="w-fit gap-2 text-destructive hover:text-destructive"><Trash size={16} /> Remove</Button></AlertDialogTrigger>
                         <AlertDialogContent>
@@ -589,7 +592,7 @@ export function ComputePage() {
                         return (
                           <div key={tool.slug} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5">
                             <div className="flex min-w-0 items-center gap-2"><Icon size={17} weight="fill" /><span className="truncate text-sm font-medium">{tool.label}</span></div>
-                            <Badge variant="outline" className={cn(state.ready && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", state.label === "Setup failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>{state.label === "Setting up" && <ArrowClockwise size={12} className="mr-1 animate-spin" />}{state.label}</Badge>
+                            <Badge variant="outline" className={cn(state.ready && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", state.label === "Update required" && "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200", state.label === "Setup failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>{state.label === "Setting up" && <ArrowClockwise size={12} className="mr-1 animate-spin" />}{state.label}</Badge>
                           </div>
                         )
                       })}

@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +61,38 @@ class VideoEnhancerTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("MP4", response.get_json()["message"])
+
+    def test_compute_submission_requires_the_current_worker_protocol(self) -> None:
+        client = MagicMock()
+        client.run_binary.return_value = type("Submission", (), {"id": "run-1"})()
+        client.wait.return_value = type(
+            "Run", (), {"id": "run-1", "status": "succeeded", "error": None}
+        )()
+        client.download_artifact.return_value = b"\x89PNG\r\n\x1a\npreview"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "preview.png"
+            source.write_bytes(b"\x89PNG\r\n\x1a\nsource")
+            with server.video_enhancer_jobs_lock:
+                server.video_enhancer_jobs["job-1"] = {}
+            with (
+                patch.object(server, "get_modal_control_plane_client", return_value=client),
+                patch.object(server, "temp_downloads_path", temporary),
+                patch.object(
+                    server,
+                    "VIDEO_ENHANCER_CONTROL_PLANE_URL",
+                    "http://127.0.0.1:8765",
+                ),
+            ):
+                server.run_video_enhancer_job(
+                    "job-1", source, "preview", 1920, 1080, 1
+                )
+
+        submitted_kwargs = client.run_binary.call_args.kwargs["kwargs"]
+        self.assertEqual(
+            submitted_kwargs["worker_protocol"],
+            server.VIDEO_ENHANCER_WORKER_PROTOCOL,
+        )
 
 
 if __name__ == "__main__":
