@@ -37,7 +37,7 @@ class FrontendRouteTests(unittest.TestCase):
                 asset_response.close()
 
     def test_spa_route_returns_the_frontend_shell(self) -> None:
-        for route in ("/audio-separator", "/background-remover"):
+        for route in ("/audio-separator", "/background-remover", "/video-enhancer", "/compute"):
             with self.subTest(route=route):
                 response = self.client.get(route)
                 self.assertEqual(response.status_code, 200)

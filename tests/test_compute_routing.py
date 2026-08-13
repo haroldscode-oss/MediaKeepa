@@ -30,6 +30,7 @@ class ComputeRoutingTests(unittest.TestCase):
         self.client = server.app.test_client()
         self.original_audio_backend = server.AUDIO_SEPARATOR_BACKEND
         self.original_background_backend = server.BACKGROUND_REMOVER_BACKEND
+        self.original_video_control_plane_url = server.VIDEO_ENHANCER_CONTROL_PLANE_URL
         self.mode_directory = tempfile.TemporaryDirectory(prefix="mediakeepa-mode-test-")
         self.original_mode_path = server.PERFORMANCE_MODE_PATH
         server.PERFORMANCE_MODE_PATH = Path(self.mode_directory.name) / "performance-mode"
@@ -37,6 +38,7 @@ class ComputeRoutingTests(unittest.TestCase):
     def tearDown(self) -> None:
         server.AUDIO_SEPARATOR_BACKEND = self.original_audio_backend
         server.BACKGROUND_REMOVER_BACKEND = self.original_background_backend
+        server.VIDEO_ENHANCER_CONTROL_PLANE_URL = self.original_video_control_plane_url
         server.PERFORMANCE_MODE_PATH = self.original_mode_path
         self.mode_directory.cleanup()
 
@@ -53,6 +55,7 @@ class ComputeRoutingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(server.AUDIO_SEPARATOR_BACKEND, "control-plane")
         self.assertEqual(server.BACKGROUND_REMOVER_BACKEND, "control-plane")
+        self.assertEqual(server.VIDEO_ENHANCER_CONTROL_PLANE_URL, self.original_video_control_plane_url)
         self.assertFalse(server.PERFORMANCE_MODE_PATH.exists())
 
     @patch.object(server.requests, "request", return_value=FakeUpstream(status_code=400))

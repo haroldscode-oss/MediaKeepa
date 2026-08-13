@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom"
-import { Cpu, DownloadSimple, Image, Waveform } from "@phosphor-icons/react"
+import { Cpu, DownloadSimple, FilmSlate, Image, Waveform } from "@phosphor-icons/react"
 import { MediaKeepaLogo } from "@/components/MediaKeepaLogo"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { cn } from "@/lib/utils"
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/downloader", label: "Media Downloader", icon: DownloadSimple },
   { to: "/audio-separator", label: "Audio Separator", icon: Waveform },
   { to: "/background-remover", label: "Background Remover", icon: Image },
+  { to: "/video-enhancer", label: "Video Enhancer", icon: FilmSlate },
   { to: "/compute", label: "MediaKeepa Compute", shortLabel: "Compute", icon: Cpu },
 ]
 

@@ -8,9 +8,9 @@ http://127.0.0.1:8080/compute/
 
 ## The simple model
 
-- Select **Add Account** once for each Modal account you want MediaKeepa to use.
-- Paste its Modal API token command and your Hugging Face access token in the private local form.
-- MediaKeepa creates the required Modal secret, deploys both GPU workers in the currently selected performance mode, prepares the gated background model, and links both tools automatically.
+- Add your Hugging Face access token once under **Hugging Face model access**.
+- Select **Add Account** for each Modal account you want MediaKeepa to use and paste only that account's Modal API token command.
+- MediaKeepa creates the required Modal secret, deploys its GPU workers in the currently selected performance mode, prepares the image and video models, and links every tool automatically.
 - There is no separate Modal connection for each tool.
 - For each Economy/Compute job, MediaKeepa considers only accounts that are connected, healthy, bound to the tool, deployed, and have enough known credit.
 - MediaKeepa tries the eligible account with the highest remaining credit first.
@@ -21,30 +21,36 @@ Credits are not transferred or combined between Modal workspaces. The accounts f
 
 ## Add an account
 
-1. Sign in to Modal and select the workspace you want to add.
-2. In that workspace's settings, create an API token. Modal displays a command containing `--token-id ak-...` and `--token-secret as-...`.
-3. Start MediaKeepa with `./start-mediakeepa.ps1` and open `/compute/`.
-4. Select **Add Account**.
-5. Paste the complete token command into the Modal token field.
-6. Accept the `briaai/RMBG-2.0` model terms on Hugging Face, create an `hf_...` access token, and paste it into the Hugging Face field.
+1. Start MediaKeepa with `./start-mediakeepa.ps1` and open `/compute/`.
+2. Accept the `briaai/RMBG-2.0` model terms on Hugging Face and create an `hf_...` access token.
+3. Under **Hugging Face model access**, select **Add token** and save it once. You can also enter it during the first **Add Account** setup.
+4. Sign in to Modal and select the workspace you want to add.
+5. In that workspace's settings, create an API token. Modal displays a command containing `--token-id ak-...` and `--token-secret as-...`.
+6. Select **Add Account** and paste the complete Modal token command.
 7. Optionally add a friendly label. Leaving it blank uses Modal's verified name.
-8. Select **Set up account** and keep the page open while the first deployment completes.
+8. Select **Add account**. The form closes after credential verification; MediaKeepa's GPU workers continue setting up in the background.
 
 MediaKeepa completes the following automatically without changing your active Modal CLI profile or requiring terminal commands:
 
 1. verifies the Modal workspace credential;
 2. creates or updates the private `MediaKeepa_backgroundremover` Modal secret;
-3. deploys both workers in `main` with the selected Economy or Fast scale-to-zero settings;
+3. deploys the MediaKeepa workers in `main` with the selected Economy or Fast scale-to-zero settings;
 4. downloads and validates access to the gated background model;
-5. encrypts the Modal token for the current Windows user;
+5. encrypts both the shared Hugging Face token and each Modal token for the current Windows user;
 6. adds both fixed workload links:
 
 - **Audio Separator** -> `mediakeepa-audio-separator.separate_audio`
 - **Background Remover** -> `mediakeepa-background-remover.remove_background`
+- **Video Enhancer Preview** -> `mediakeepa-video-enhancer.enhance_preview` on 1x H100/H200
+- **Video Enhancer** -> `mediakeepa-video-enhancer.enhance_video` on 4x H100/H200
 
-Adding another account repeats the same process and appends it to the pool. It does not replace an existing account. Adding a fresh token for an already-connected Modal workspace updates that existing account instead of creating a duplicate.
+Adding another account reuses the saved Hugging Face token automatically and appends the Modal account to the pool. It does not replace an existing account. Adding a fresh token for an already-connected Modal workspace updates that existing account instead of creating a duplicate.
 
-The Hugging Face token is sent from memory directly to Modal's secret service through the local setup backend. It is never written to disk or placed in MediaKeepa's credential store. Never paste either token into chat, documentation, source control, screenshots, or issue reports. Paste them only into the local Compute form. Do not use a Modal proxy-auth token (`wk-` / `ws-`); Compute needs a workspace API token.
+The Hugging Face token is stored only as Windows DPAPI-encrypted ciphertext and is never returned to the browser after saving. MediaKeepa unlocks it only when applying the private Background Remover secret to a connected Modal workspace. Selecting **Replace token** updates that secret across every connected account. Never paste either token into chat, documentation, source control, screenshots, or issue reports. Paste them only into the local Compute form. Do not use a Modal proxy-auth token (`wk-` / `ws-`); Compute needs a workspace API token.
+
+## Recent jobs
+
+Recent jobs use a compact table with **Job**, **Account**, **Date**, **Duration**, **Cost**, and **Status** columns. The **Date** column includes both the calendar date and time. Cost is marked with a `~` because it is the configured workload estimate rather than a finalized Modal invoice amount. The table shows five jobs per page.
 
 Official Modal references:
 
@@ -56,6 +62,8 @@ Official Modal references:
 Credential connection, workload linkage, and worker deployment are separate facts. Compute checks all three and reports them per account and tool:
 
 - **Ready**: the account is healthy, its balance is known and sufficient, the workload link exists, and the expected Modal app appears deployed.
+- **Setting up**: the account is already connected while MediaKeepa deploys that worker in the background. Audio Separator and Background Remover can become ready before the larger Video Enhancer checkpoint finishes preparing.
+- **Setup failed**: background deployment needs attention. The account card shows the error; use **Add Account** with the same credentials to retry safely.
 - **Deployment needed**: the token and workload link are present, but the expected Modal app was not found in that account.
 - **Balance unavailable** or **Insufficient credit**: the account cannot currently be selected automatically.
 - **Connection issue**: Modal could not provide a usable account snapshot.
@@ -67,7 +75,7 @@ The **Compute pool** shows both tool states for every connected account. A job c
 
 The setup wizard deploys Economy mode by default. Deployment creates the Modal apps and prepares their models, but it does not keep paid GPU containers running. A GPU starts when a MediaKeepa job reaches that worker and scales back to zero after the idle window.
 
-The first setup can take several minutes because Modal builds images and MediaKeepa validates the gated model. When the form closes successfully, the account is connected and deployment is complete. Compute refreshes readiness automatically.
+The first deployment can still take several minutes because Modal builds images and MediaKeepa validates the gated model, but the Add Account form no longer waits for that work. The account appears immediately with live setup progress, each tool becomes **Ready** independently, and MediaKeepa shows a notification when setup finishes. Setup state survives a page refresh or application restart.
 
 ## Remove an account
 
@@ -107,11 +115,11 @@ Confirm the command contains an `ak-` token ID and `as-` token secret created in
 
 ### Setup reports a Hugging Face or model error
 
-Confirm that the Hugging Face account behind the submitted token has accepted the `briaai/RMBG-2.0` terms. Then open **Add Account** and run setup again with the same Modal account and a valid Hugging Face token. The operation safely updates the existing account.
+Confirm that the Hugging Face account behind the submitted token has accepted the `briaai/RMBG-2.0` terms. Select **Replace token** under **Hugging Face model access** and save a valid token. MediaKeepa updates the private secret across all connected accounts.
 
 ### Setup was interrupted during deployment
 
-Open **Add Account** and submit the same credentials again. Provisioning is intentionally repeatable: the Modal secret is updated, deployments are safely reapplied, and the local Compute account is created only after every setup step succeeds. A failed attempt does not require terminal cleanup.
+Open **Add Account** and submit the same credentials again. Provisioning is intentionally repeatable: the Modal secret and deployments are safely reapplied in the background. A failed attempt does not require terminal cleanup.
 
 ### An account is verified but a tool is not ready
 

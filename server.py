@@ -1629,7 +1629,7 @@ def run_background_removal(job_id, input_path, original_name):
 
 
 def activate_compute_pool_routing():
-    """Route both interactive tools through connected Compute accounts immediately."""
+    """Route interactive GPU tools through connected Compute accounts immediately."""
     global AUDIO_SEPARATOR_BACKEND, BACKGROUND_REMOVER_BACKEND
 
     AUDIO_SEPARATOR_BACKEND = "control-plane"
@@ -1641,6 +1641,162 @@ def activate_compute_pool_routing():
     get_legacy_modal_audio_separator_function.cache_clear()
     get_modal_background_remover_service.cache_clear()
     get_legacy_modal_background_remover_function.cache_clear()
+
+
+# Video Enhancer intentionally has no local or wrapper fallback. Every preview
+# and full-video job is routed to MediaKeepa's direct SeedVR2 Modal deployment.
+VIDEO_ENHANCER_MAX_BYTES = 512 * 1024 * 1024
+VIDEO_ENHANCER_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
+VIDEO_ENHANCER_ALLOWED_EXTENSIONS = {"mp4", "mov", "m4v", "mkv", "webm"}
+VIDEO_ENHANCER_CONTROL_PLANE_URL = os.environ.get(
+    "VIDEO_ENHANCER_CONTROL_PLANE_URL",
+    AUDIO_SEPARATOR_CONTROL_PLANE_URL,
+).strip().rstrip("/")
+VIDEO_ENHANCER_CONTROL_PLANE_APPLICATION = os.environ.get(
+    "VIDEO_ENHANCER_CONTROL_PLANE_APPLICATION",
+    "mediakeepa",
+).strip()
+VIDEO_ENHANCER_PREVIEW_WORKLOAD = os.environ.get(
+    "VIDEO_ENHANCER_PREVIEW_WORKLOAD",
+    "enhance-video-preview",
+).strip()
+VIDEO_ENHANCER_FULL_WORKLOAD = os.environ.get(
+    "VIDEO_ENHANCER_FULL_WORKLOAD",
+    "enhance-video",
+).strip()
+VIDEO_ENHANCER_TIMEOUT_SECONDS = int(
+    os.environ.get("VIDEO_ENHANCER_TIMEOUT_SECONDS", str(24 * 60 * 60))
+)
+
+video_enhancer_jobs = {}
+video_enhancer_jobs_lock = threading.Lock()
+video_enhancer_executor = ThreadPoolExecutor(max_workers=2)
+atexit.register(lambda: video_enhancer_executor.shutdown(wait=False))
+
+
+def update_video_enhancer_job(job_id, **changes):
+    with video_enhancer_jobs_lock:
+        job = video_enhancer_jobs.get(job_id)
+        if job is not None:
+            job.update(changes)
+
+
+def video_output_dimensions(width, height):
+    try:
+        parsed_width = int(width)
+        parsed_height = int(height)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Choose a valid Video Enhancer output resolution.") from exc
+    if parsed_width < 16 or parsed_height < 16 or parsed_width > 3840 or parsed_height > 3840:
+        raise ValueError("Video Enhancer output dimensions must be between 16 and 3,840 pixels per edge.")
+    # Browser-compatible H.264 requires even edges. SeedVR2's stricter
+    # 16-pixel boundary is handled remotely by rendering slightly larger and
+    # applying a lossless exact-size crop.
+    return parsed_width - parsed_width % 2, parsed_height - parsed_height % 2
+
+
+def estimate_video_enhancement_cost(duration_seconds, output_width, output_height, preview=False):
+    if preview:
+        return 1.50
+    try:
+        duration = max(1.0, min(float(duration_seconds), 24 * 60 * 60))
+    except (TypeError, ValueError):
+        duration = 60.0
+    pixel_ratio = max(0.25, (output_width * output_height) / (1920 * 1080))
+    # This is a conservative routing estimate, not a charge. The final Modal
+    # bill remains based on the actual per-second Hopper GPU runtime.
+    return round(max(2.0, min(1000.0, duration * 0.06 * pixel_ratio)), 2)
+
+
+def validate_video_result(result_bytes, kind):
+    if not isinstance(result_bytes, bytes) or not result_bytes:
+        raise RuntimeError("Video Enhancer returned an empty result.")
+    if kind == "preview":
+        if not result_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError("Video Enhancer returned an invalid preview image.")
+    elif b"ftyp" not in result_bytes[:64]:
+        raise RuntimeError("Video Enhancer returned an invalid MP4 video.")
+    return result_bytes
+
+
+def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height, duration_seconds=0):
+    try:
+        if not VIDEO_ENHANCER_CONTROL_PLANE_URL:
+            raise RuntimeError("MediaKeepa Compute is required for Video Enhancer.")
+        update_video_enhancer_job(
+            job_id,
+            status="processing",
+            progress=12,
+            message="Routing Maximum Quality enhancement to the best available Modal account...",
+        )
+        input_bytes = Path(input_path).read_bytes()
+        client = get_modal_control_plane_client()
+        client.health()
+        is_preview = kind == "preview"
+        estimated_cost = estimate_video_enhancement_cost(
+            duration_seconds,
+            output_width,
+            output_height,
+            preview=is_preview,
+        )
+        submitted = client.run_binary(
+            VIDEO_ENHANCER_CONTROL_PLANE_APPLICATION,
+            VIDEO_ENHANCER_PREVIEW_WORKLOAD if is_preview else VIDEO_ENHANCER_FULL_WORKLOAD,
+            input_bytes,
+            keyword="frame_bytes" if is_preview else "video_bytes",
+            filename="selected-frame.png" if is_preview else "source-video.mp4",
+            content_type="image/png" if is_preview else "video/mp4",
+            kwargs={"output_width": output_width, "output_height": output_height},
+            estimated_cost_usd=estimated_cost,
+            timeout_seconds=2700 if is_preview else VIDEO_ENHANCER_TIMEOUT_SECONDS,
+            result_filename="mediakeepa-preview.png" if is_preview else "mediakeepa-enhanced.mp4",
+            result_content_type="image/png" if is_preview else "video/mp4",
+        )
+        update_video_enhancer_job(
+            job_id,
+            progress=28,
+            message=(
+                "Enhancing the selected frame with Maximum Quality..."
+                if is_preview
+                else "Restoring the full video with four Hopper GPUs. This quality-first job can take a while..."
+            ),
+            compute_run_id=submitted.id,
+            estimated_cost=estimated_cost,
+        )
+        run = client.wait(
+            submitted.id,
+            timeout=(2700 if is_preview else VIDEO_ENHANCER_TIMEOUT_SECONDS) + 180,
+        )
+        if run.status.lower() != "succeeded":
+            raise RuntimeError(run.error or f"Modal Compute run {run.id} ended as {run.status}.")
+        result = validate_video_result(client.download_artifact(run, timeout=30 * 60), kind)
+        filename = f"{job_id}_{'preview.png' if is_preview else 'enhanced.mp4'}"
+        destination = Path(temp_downloads_path) / filename
+        destination.write_bytes(result)
+        update_video_enhancer_job(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Enhanced preview ready." if is_preview else "Maximum Quality video ready.",
+            preview_url=f"/api/video-enhancer/file/{job_id}/{filename}",
+            download_url=f"/api/video-enhancer/file/{job_id}/{filename}?download=1",
+            allowed_files={filename},
+            width=output_width,
+            height=output_height,
+        )
+    except Exception as exc:
+        print(f"Video Enhancer job {job_id} failed: {exc}")
+        update_video_enhancer_job(
+            job_id,
+            status="error",
+            progress=0,
+            message=str(exc),
+        )
+    finally:
+        try:
+            Path(input_path).unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"Could not clean Video Enhancer upload {input_path}: {exc}")
 
 # Clean up any leftover files from previous runs on startup (always run this)
 try:
@@ -2308,6 +2464,120 @@ def background_remover_file(job_id, filename):
         as_attachment=request.args.get("download") == "1",
         conditional=True,
         mimetype="image/png",
+    )
+
+
+def _start_video_enhancer_job(kind):
+    field_name = "frame" if kind == "preview" else "video"
+    maximum_bytes = VIDEO_ENHANCER_PREVIEW_MAX_BYTES if kind == "preview" else VIDEO_ENHANCER_MAX_BYTES
+    upload = request.files.get(field_name)
+    if upload is None or not upload.filename:
+        message = "Choose an exact video frame to preview." if kind == "preview" else "Choose a video to enhance."
+        return jsonify({"status": "error", "message": message}), 400
+
+    safe_name = secure_filename(upload.filename)
+    extension = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    if kind == "preview":
+        if extension != "png":
+            return jsonify({"status": "error", "message": "Preview frames must be PNG images."}), 400
+    elif extension not in VIDEO_ENHANCER_ALLOWED_EXTENSIONS:
+        return jsonify({
+            "status": "error",
+            "message": "Use an MP4, MOV, M4V, MKV, or WebM video.",
+        }), 400
+
+    try:
+        output_width, output_height = video_output_dimensions(
+            request.form.get("output_width"),
+            request.form.get("output_height"),
+        )
+        duration_seconds = float(request.form.get("duration") or 0)
+        if duration_seconds < 0 or duration_seconds > 24 * 60 * 60:
+            raise ValueError("Videos must be 24 hours or shorter.")
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+    job_id = uuid.uuid4().hex
+    input_path = Path(temp_downloads_path) / f"{job_id}_{kind}_input.{extension}"
+    upload.save(input_path)
+    file_size = input_path.stat().st_size
+    if file_size == 0:
+        input_path.unlink(missing_ok=True)
+        return jsonify({"status": "error", "message": "The uploaded media is empty."}), 400
+    if file_size > maximum_bytes:
+        input_path.unlink(missing_ok=True)
+        message = "Preview frames must be 64 MB or smaller." if kind == "preview" else "Videos must be 512 MB or smaller."
+        return jsonify({"status": "error", "message": message}), 413
+
+    with video_enhancer_jobs_lock:
+        video_enhancer_jobs[job_id] = {
+            "status": "queued",
+            "progress": 5,
+            "message": "Your enhancement is queued for Maximum Quality processing.",
+            "created_at": time.time(),
+            "kind": kind,
+            "width": output_width,
+            "height": output_height,
+            "allowed_files": set(),
+        }
+    video_enhancer_executor.submit(
+        run_video_enhancer_job,
+        job_id,
+        str(input_path),
+        kind,
+        output_width,
+        output_height,
+        duration_seconds,
+    )
+    return jsonify({"status": "queued", "job_id": job_id}), 202
+
+
+@app.route("/api/video-enhancer/preview", methods=["POST"])
+@limiter.limit("20 per hour")
+def start_video_enhancer_preview():
+    if request.content_length and request.content_length > VIDEO_ENHANCER_PREVIEW_MAX_BYTES + (1024 * 1024):
+        return jsonify({"status": "error", "message": "Preview frames must be 64 MB or smaller."}), 413
+    return _start_video_enhancer_job("preview")
+
+
+@app.route("/api/video-enhancer", methods=["POST"])
+@limiter.limit("10 per hour")
+def start_video_enhancer():
+    if request.content_length and request.content_length > VIDEO_ENHANCER_MAX_BYTES + (1024 * 1024):
+        return jsonify({"status": "error", "message": "Videos must be 512 MB or smaller."}), 413
+    return _start_video_enhancer_job("full")
+
+
+@app.route("/api/video-enhancer/status/<job_id>")
+@limiter.exempt
+def video_enhancer_status(job_id):
+    with video_enhancer_jobs_lock:
+        job = video_enhancer_jobs.get(job_id)
+        if job is None:
+            return jsonify({"status": "error", "message": "Video enhancement job not found."}), 404
+        public_job = {
+            key: value
+            for key, value in job.items()
+            if key not in {"allowed_files", "created_at"}
+        }
+    return jsonify(public_job)
+
+
+@app.route("/api/video-enhancer/file/<job_id>/<filename>")
+@limiter.exempt
+def video_enhancer_file(job_id, filename):
+    with video_enhancer_jobs_lock:
+        job = video_enhancer_jobs.get(job_id)
+        allowed_files = set(job.get("allowed_files", set())) if job else set()
+        kind = job.get("kind") if job else None
+    if filename not in allowed_files:
+        return jsonify({"status": "error", "message": "Enhanced media not found."}), 404
+    return send_from_directory(
+        temp_downloads_path,
+        filename,
+        as_attachment=request.args.get("download") == "1",
+        conditional=True,
+        mimetype="image/png" if kind == "preview" else "video/mp4",
     )
 
 @app.route("/download", methods=["POST"])

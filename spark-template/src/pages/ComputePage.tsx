@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ArrowClockwise,
   CaretLeft,
@@ -6,6 +6,7 @@ import {
   CheckCircle,
   ClockCounterClockwise,
   Cpu,
+  FilmSlate,
   Image as ImageIcon,
   LinkSimple,
   LockKey,
@@ -35,6 +36,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
@@ -50,6 +52,11 @@ type ComputeAccount = {
   creditRemaining?: number | null
   apps?: ModalApp[]
   errors?: string[]
+  setupStatus?: "setting-up" | "ready" | "failed"
+  setupStage?: string
+  setupError?: string | null
+  setupUpdatedAt?: string | null
+  setupTools?: Record<string, "setting-up" | "ready" | "failed">
 }
 
 type ComputeStatus = {
@@ -62,7 +69,9 @@ type Performance = {
   alwaysOn: boolean
   audio: { gpu: string; minimumContainers: number; idleSeconds: number }
   background: { gpu: string; minimumContainers: number; idleSeconds: number }
+  video?: { previewGpu: string; fullGpu: string; minimumContainers: number; idleSeconds: number }
 }
+type HuggingFaceAccess = { configured: boolean; updatedAt?: string }
 
 type Target = { accountId: string; enabled: boolean }
 type Workload = {
@@ -79,10 +88,8 @@ type ComputeJob = {
   status: string
   submittedAt?: string
   durationSeconds?: number
+  estimatedCostUsd?: number
   error?: string
-  attempts?: Array<unknown>
-  inputArtifact?: { sizeBytes?: number }
-  resultArtifact?: { sizeBytes?: number }
 }
 
 const JOBS_PER_PAGE = 5
@@ -102,6 +109,13 @@ const tools = [
     appName: "mediakeepa-background-remover",
     estimatedCost: 0.05,
   },
+  {
+    slug: "enhance-video",
+    label: "Video Enhancer",
+    icon: FilmSlate,
+    appName: "mediakeepa-video-enhancer",
+    estimatedCost: 2,
+  },
 ] as const
 
 const extractCredential = (text: string) => ({
@@ -109,18 +123,13 @@ const extractCredential = (text: string) => ({
   tokenSecret: text.match(/--token-secret(?:=|\s+)["']?(as-[A-Za-z0-9_-]+)/i)?.[1] || text.match(/(?:^|\s)(as-[A-Za-z0-9_-]+)(?:\s|$)/i)?.[1],
 })
 
-const jobTool = (job: ComputeJob) => tools.find((tool) => tool.slug === job.workloadSlug) || tools[0]
+const jobTool = (job: ComputeJob) => tools.find((tool) => tool.slug === (job.workloadSlug === "enhance-video-preview" ? "enhance-video" : job.workloadSlug)) || tools[0]
 
 function statusStyle(status: string) {
   const value = status.toLowerCase()
   if (value === "succeeded" || value === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
   if (value === "failed" || value === "error") return "border-destructive/20 bg-destructive/10 text-destructive"
   return "border-border bg-muted text-muted-foreground"
-}
-
-function formatTime(value?: string) {
-  if (!value) return "Just now"
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value))
 }
 
 function formatCredit(value?: number | null) {
@@ -134,11 +143,18 @@ function formatDuration(value?: number) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-function formatFileSize(value?: number) {
-  if (value == null || value < 1) return null
-  const units = ["B", "KB", "MB", "GB"]
-  const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(value / (1024 ** unit))} ${units[unit]}`
+function formatCost(value?: number) {
+  if (value == null) return "—"
+  return `~${new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`
+}
+
+function formatJobDate(value?: string) {
+  if (!value) return { date: "Today", time: "Just now" }
+  const date = new Date(value)
+  return {
+    date: new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date),
+    time: new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date),
+  }
 }
 
 function statusLabel(status: string) {
@@ -171,45 +187,50 @@ export function ComputePage() {
     audio: { gpu: "L40S", minimumContainers: 0, idleSeconds: 60 },
     background: { gpu: "L4", minimumContainers: 0, idleSeconds: 60 },
   })
+  const [huggingFaceAccess, setHuggingFaceAccess] = useState<HuggingFaceAccess>({ configured: false })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [label, setLabel] = useState("")
   const [credential, setCredential] = useState("")
   const [hfToken, setHfToken] = useState("")
+  const [hfDialogOpen, setHfDialogOpen] = useState(false)
+  const [replacementHfToken, setReplacementHfToken] = useState("")
+  const [hfError, setHfError] = useState("")
+  const [savingHfToken, setSavingHfToken] = useState(false)
   const [formError, setFormError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState("")
+  const [settingUpId, setSettingUpId] = useState("")
   const [applyingMode, setApplyingMode] = useState(false)
+  const previousSetupStatuses = useRef<Record<string, string>>({})
 
   const accounts = useMemo(() => status.accounts.filter((account) => account.connected), [status.accounts])
-
-  useEffect(() => {
-    const previous = document.title
-    document.title = "MediaKeepa Compute"
-    return () => { document.title = previous }
-  }, [])
+  const settingUpCount = accounts.filter((account) => account.setupStatus === "setting-up").length
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true)
     try {
-      const [statusResponse, catalogResponse, jobsResponse, performanceResponse] = await Promise.all([
+      const [statusResponse, catalogResponse, jobsResponse, performanceResponse, huggingFaceResponse] = await Promise.all([
         fetch(`/compute/api/status${refresh ? "?refresh=1" : ""}`, { cache: "no-store" }),
         fetch("/compute/api/applications", { cache: "no-store" }),
         fetch("/compute/api/jobs", { cache: "no-store" }),
         fetch("/compute/api/performance", { cache: "no-store" }),
+        fetch("/compute/api/hugging-face", { cache: "no-store" }),
       ])
-      const [statusResult, catalogResult, jobsResult, performanceResult] = await Promise.all([
-        statusResponse.json(), catalogResponse.json(), jobsResponse.json(), performanceResponse.json(),
+      const [statusResult, catalogResult, jobsResult, performanceResult, huggingFaceResult] = await Promise.all([
+        statusResponse.json(), catalogResponse.json(), jobsResponse.json(), performanceResponse.json(), huggingFaceResponse.json(),
       ])
       if (!statusResponse.ok) throw new Error(statusResult.error || "Could not read the connected Modal accounts")
       if (!catalogResponse.ok) throw new Error(catalogResult.error || "Could not read MediaKeepa jobs")
       if (!jobsResponse.ok) throw new Error(jobsResult.error || "Could not read job history")
       if (!performanceResponse.ok) throw new Error(performanceResult.error || "Could not read the performance mode")
+      if (!huggingFaceResponse.ok) throw new Error(huggingFaceResult.error || "Could not read Hugging Face model access")
       setStatus(statusResult)
       setCatalog(catalogResult)
       setJobs(jobsResult.jobs || [])
       setPerformance(performanceResult)
+      setHuggingFaceAccess(huggingFaceResult)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "MediaKeepa Compute is unavailable")
     } finally {
@@ -232,6 +253,15 @@ export function ComputePage() {
   }, [workloads])
 
   const toolState = useCallback((account: ComputeAccount, tool: typeof tools[number]) => {
+    const setupTool = account.setupTools?.[tool.slug]
+    if (account.setupStatus === "setting-up") {
+      if (setupTool === "ready") return { ready: true, label: "Ready" }
+      return { ready: false, label: "Setting up" }
+    }
+    if (account.setupStatus === "failed") {
+      if (setupTool === "ready") return { ready: true, label: "Ready" }
+      return { ready: false, label: "Setup failed" }
+    }
     if (!isBound(account.id, tool.slug)) return { ready: false, label: "Link missing" }
     if (account.health === "not-refreshed") return { ready: false, label: "Checking" }
     if (!["healthy", "degraded"].includes(account.health || "")) return { ready: false, label: "Connection issue" }
@@ -251,9 +281,33 @@ export function ComputePage() {
     return jobs.slice(start, start + JOBS_PER_PAGE)
   }, [jobPage, jobs])
   const newestJobId = jobs[0]?.id
+  const setupPollingKey = accounts.filter((account) => account.setupStatus === "setting-up").map((account) => account.id).join("|")
 
   useEffect(() => { setJobPage(1) }, [newestJobId])
   useEffect(() => { setJobPage((page) => Math.min(page, totalJobPages)) }, [totalJobPages])
+  useEffect(() => {
+    if (!setupPollingKey) return
+    const timer = window.setInterval(() => { void load(false) }, 2000)
+    return () => window.clearInterval(timer)
+  }, [load, setupPollingKey])
+  useEffect(() => {
+    let shouldRefreshLiveStatus = false
+    const nextStatuses: Record<string, string> = {}
+    for (const account of accounts) {
+      const current = account.setupStatus || "ready"
+      const previous = previousSetupStatuses.current[account.id]
+      nextStatuses[account.id] = current
+      if (previous === "setting-up" && current === "ready") {
+        toast.success(`${account.label} is ready for every MediaKeepa tool.`)
+        shouldRefreshLiveStatus = true
+      }
+      if (previous === "setting-up" && current === "failed") {
+        toast.error(`${account.label} needs setup attention.`)
+      }
+    }
+    previousSetupStatuses.current = nextStatuses
+    if (shouldRefreshLiveStatus) void load(true)
+  }, [accounts, load])
 
   const openConnection = () => {
     setLabel("")
@@ -269,7 +323,7 @@ export function ComputePage() {
       setFormError("Paste the complete Modal token command containing both the ak- token ID and as- token secret.")
       return
     }
-    if (!hfToken.trim().startsWith("hf_")) {
+    if (!huggingFaceAccess.configured && !hfToken.trim().startsWith("hf_")) {
       setFormError("Paste your Hugging Face access token beginning with hf_.")
       return
     }
@@ -279,7 +333,7 @@ export function ComputePage() {
       const response = await fetch("/compute/api/accounts/provision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: label.trim(), credential: credential.trim(), hfToken: hfToken.trim() }),
+        body: JSON.stringify({ label: label.trim(), credential: credential.trim(), hfToken: huggingFaceAccess.configured ? undefined : hfToken.trim() }),
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || "Could not set up this Modal account")
@@ -287,11 +341,43 @@ export function ComputePage() {
       setCredential("")
       setHfToken("")
       toast.success(result.message)
-      await load(true)
+      await load(false)
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Could not set up this Modal account")
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const openHuggingFaceDialog = () => {
+    setReplacementHfToken("")
+    setHfError("")
+    setHfDialogOpen(true)
+  }
+
+  const saveHuggingFaceToken = async () => {
+    if (!replacementHfToken.trim().startsWith("hf_")) {
+      setHfError("Paste a Hugging Face access token beginning with hf_.")
+      return
+    }
+    setSavingHfToken(true)
+    setHfError("")
+    try {
+      const response = await fetch("/compute/api/hugging-face", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hfToken: replacementHfToken.trim() }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || "Could not save Hugging Face model access")
+      setHuggingFaceAccess(result)
+      setHfDialogOpen(false)
+      setReplacementHfToken("")
+      toast.success(result.message)
+    } catch (error) {
+      setHfError(error instanceof Error ? error.message : "Could not save Hugging Face model access")
+    } finally {
+      setSavingHfToken(false)
     }
   }
 
@@ -311,6 +397,25 @@ export function ComputePage() {
       toast.error(error instanceof Error ? error.message : "Could not remove this Modal account")
     } finally {
       setRemovingId("")
+    }
+  }
+
+  const setupExistingAccount = async (account: ComputeAccount) => {
+    setSettingUpId(account.id)
+    try {
+      const response = await fetch("/compute/api/accounts/provision-existing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || "Could not set up the latest MediaKeepa tools")
+      toast.success(result.message)
+      await load(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not set up the latest MediaKeepa tools")
+    } finally {
+      setSettingUpId("")
     }
   }
 
@@ -347,7 +452,7 @@ export function ComputePage() {
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">MediaKeepa Compute</h1>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Add each Modal account once. MediaKeepa installs both GPU workers, prepares their models, and routes jobs to the ready account with the most available credit.
+                Add each Modal account once. MediaKeepa installs its GPU tools, prepares their models, and routes jobs to the ready account with the most available credit.
               </p>
             </div>
           </div>
@@ -355,6 +460,26 @@ export function ComputePage() {
             <LinkSimple size={17} weight="bold" /> Add Account
           </Button>
         </section>
+
+        <Card>
+          <CardContent className="flex flex-col gap-4 p-5 sm:p-6 md:flex-row md:items-center md:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted"><LockKey size={19} weight="fill" /></div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-semibold">Hugging Face model access</h2>
+                  <Badge variant="outline" className={cn(huggingFaceAccess.configured && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300")}>
+                    {huggingFaceAccess.configured ? "Connected" : "One-time setup"}
+                  </Badge>
+                </div>
+                <p className="text-sm leading-6 text-muted-foreground">One encrypted token provides private model access across every Modal account.</p>
+              </div>
+            </div>
+            <Button variant="outline" onClick={openHuggingFaceDialog} className="shrink-0">
+              {huggingFaceAccess.configured ? "Replace token" : "Add token"}
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -397,7 +522,7 @@ export function ComputePage() {
               <div className="space-y-2">
                 <h2 className="text-xl font-semibold">Connect your first account</h2>
                 <p className="mx-auto max-w-lg text-sm leading-6 text-muted-foreground">
-                  Paste your Modal and Hugging Face tokens once. MediaKeepa handles verification, secrets, deployment, model preparation, and tool linking automatically.
+                  Add Hugging Face model access once, then connect Modal accounts with only their Modal token. MediaKeepa handles deployment and tool linking automatically.
                 </p>
               </div>
               <Button size="lg" onClick={openConnection} className="gap-2">
@@ -411,14 +536,16 @@ export function ComputePage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold">Compute pool</h2>
-                <p className="text-sm text-muted-foreground">{accounts.length} connected {accounts.length === 1 ? "account" : "accounts"}. Highest available credit is tried first.</p>
+                <p className="text-sm text-muted-foreground">{accounts.length} connected {accounts.length === 1 ? "account" : "accounts"}{settingUpCount > 0 ? ` · ${settingUpCount} setting up` : ""}. Highest available credit is tried first.</p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => void load(true)} disabled={refreshing} className="w-fit gap-2">
                 <ArrowClockwise size={16} className={cn(refreshing && "animate-spin")} /> Refresh all
               </Button>
             </div>
             <div className="grid gap-3">
-              {accounts.map((account) => (
+              {accounts.map((account) => {
+                const needsVideoSetup = account.setupStatus !== "setting-up" && !appIsDeployed(account, "mediakeepa-video-enhancer")
+                return (
                 <Card key={account.id}>
                   <CardContent className="space-y-4 p-5 sm:p-6">
                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -429,17 +556,19 @@ export function ComputePage() {
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="truncate font-semibold">{account.label}</h3>
-                            {account.id === highestCreditId && <Badge variant="outline">Highest credit</Badge>}
-                            <Badge variant="outline" className={cn("gap-1", ["healthy", "degraded"].includes(account.health || "") && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300")}>
-                              {["healthy", "degraded"].includes(account.health || "") ? <CheckCircle size={13} weight="fill" /> : <WarningCircle size={13} weight="fill" />}
-                              {["healthy", "degraded"].includes(account.health || "") ? "Verified" : account.health === "not-refreshed" ? "Checking" : "Attention needed"}
+                            {account.id === highestCreditId && account.setupStatus !== "setting-up" && <Badge variant="outline">Highest credit</Badge>}
+                            <Badge variant="outline" className={cn("gap-1", account.setupStatus === "ready" && ["healthy", "degraded"].includes(account.health || "") && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", account.setupStatus === "failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>
+                              {account.setupStatus === "setting-up" ? <ArrowClockwise size={13} className="animate-spin" /> : account.setupStatus === "failed" ? <WarningCircle size={13} weight="fill" /> : ["healthy", "degraded"].includes(account.health || "") ? <CheckCircle size={13} weight="fill" /> : <WarningCircle size={13} weight="fill" />}
+                              {account.setupStatus === "setting-up" ? "Setting up" : account.setupStatus === "failed" ? "Setup failed" : ["healthy", "degraded"].includes(account.health || "") ? "Verified" : account.health === "not-refreshed" ? "Checking" : "Attention needed"}
                             </Badge>
                           </div>
-                          <p className="truncate text-sm text-muted-foreground">{formatCredit(account.creditRemaining)}{account.workspaceName ? ` · Modal workspace: ${account.workspaceName}` : ""}</p>
+                          <p className="truncate text-sm text-muted-foreground">{account.setupStatus === "setting-up" ? account.setupStage || "Setting up in the background" : account.setupStatus === "failed" ? "Setup needs attention" : formatCredit(account.creditRemaining)}{account.workspaceName ? ` · Modal workspace: ${account.workspaceName}` : ""}</p>
                         </div>
                       </div>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="w-fit gap-2 text-destructive hover:text-destructive"><Trash size={16} /> Remove</Button></AlertDialogTrigger>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {needsVideoSetup && <Button variant="outline" size="sm" onClick={() => void setupExistingAccount(account)} disabled={settingUpId === account.id} className="gap-2"><FilmSlate size={16} weight="fill" />{settingUpId === account.id ? "Starting..." : "Set up Video Enhancer"}</Button>}
+                        <AlertDialog>
+                        <AlertDialogTrigger asChild><Button variant="ghost" size="sm" disabled={account.setupStatus === "setting-up"} className="w-fit gap-2 text-destructive hover:text-destructive"><Trash size={16} /> Remove</Button></AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
                             <AlertDialogTitle>Remove {account.label}?</AlertDialogTitle>
@@ -450,24 +579,26 @@ export function ComputePage() {
                             <AlertDialogAction onClick={() => void removeAccount(account)} disabled={removingId === account.id}>Remove account</AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>
-                      </AlertDialog>
+                        </AlertDialog>
+                      </div>
                     </div>
-                    <div className="grid gap-2 md:grid-cols-2">
+                    <div className="grid gap-2 md:grid-cols-3">
                       {tools.map((tool) => {
                         const state = toolState(account, tool)
                         const Icon = tool.icon
                         return (
                           <div key={tool.slug} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5">
                             <div className="flex min-w-0 items-center gap-2"><Icon size={17} weight="fill" /><span className="truncate text-sm font-medium">{tool.label}</span></div>
-                            <Badge variant="outline" className={cn(state.ready && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300")}>{state.label}</Badge>
+                            <Badge variant="outline" className={cn(state.ready && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300", state.label === "Setup failed" && "border-destructive/20 bg-destructive/10 text-destructive")}>{state.label === "Setting up" && <ArrowClockwise size={12} className="mr-1 animate-spin" />}{state.label}</Badge>
                           </div>
                         )
                       })}
                     </div>
-                    {account.errors && account.errors.length > 0 && <p className="text-xs text-muted-foreground">{account.errors[0]}</p>}
+                    {account.setupError ? <p className="text-xs text-destructive">{account.setupError} Add the same account again to retry setup.</p> : account.errors && account.errors.length > 0 && <p className="text-xs text-muted-foreground">{account.errors[0]}</p>}
                   </CardContent>
                 </Card>
-              ))}
+                )
+              })}
             </div>
           </section>
         )}
@@ -476,7 +607,7 @@ export function ComputePage() {
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted"><ClockCounterClockwise size={19} weight="bold" /></div>
-              <div><CardTitle className="text-lg">Recent jobs</CardTitle><CardDescription>See what ran, where it ran, how long it took, and the result.</CardDescription></div>
+              <div><CardTitle className="text-lg">Recent jobs</CardTitle><CardDescription>Duration and estimated cost are shown for every routed Compute job.</CardDescription></div>
             </div>
           </CardHeader>
           <CardContent>
@@ -484,36 +615,45 @@ export function ComputePage() {
               <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">No MediaKeepa Compute jobs yet.</div>
             ) : (
               <div>
-                <div className="divide-y rounded-xl border">
-                {paginatedJobs.map((job) => {
-                  const tool = jobTool(job)
-                  const Icon = tool.icon
-                  const inputSize = formatFileSize(job.inputArtifact?.sizeBytes)
-                  const outputSize = formatFileSize(job.resultArtifact?.sizeBytes)
-                  const duration = formatDuration(job.durationSeconds)
-                  const attemptCount = job.attempts?.length || 0
-                  return (
-                    <div key={job.id} className="flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted"><Icon size={20} weight="fill" /></div>
-                        <div className="min-w-0 space-y-1.5">
-                          <p className="truncate text-sm font-semibold">{tool.label}</p>
-                          <p className="truncate text-xs text-muted-foreground">{job.selectedAccountLabel || "Modal account"} · {formatTime(job.submittedAt)}</p>
-                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                            {inputSize && <span>Input {inputSize}</span>}
-                            {outputSize && <span>Output {outputSize}</span>}
-                            {attemptCount > 1 && <span>{attemptCount} attempts</span>}
-                          </div>
-                          {job.error && <p className="line-clamp-2 text-xs text-destructive">{job.error}</p>}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3 pl-[52px] md:pl-0">
-                        {duration && <span className="text-xs tabular-nums text-muted-foreground">{duration}</span>}
-                        <Badge variant="outline" className={statusStyle(job.status)}>{statusLabel(job.status)}</Badge>
-                      </div>
-                    </div>
-                  )
-                  })}
+                <div className="overflow-hidden rounded-xl border">
+                  <Table className="min-w-[760px]">
+                    <TableHeader className="bg-muted/50">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-[230px] px-4">Job</TableHead>
+                        <TableHead>Account</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Duration</TableHead>
+                        <TableHead className="text-right">Cost</TableHead>
+                        <TableHead className="px-4 text-right">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedJobs.map((job) => {
+                        const tool = jobTool(job)
+                        const Icon = tool.icon
+                        const duration = formatDuration(job.durationSeconds)
+                        const submitted = formatJobDate(job.submittedAt)
+                        return (
+                          <TableRow key={job.id}>
+                            <TableCell className="px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted"><Icon size={18} weight="fill" /></div>
+                                <span className="font-medium">{tool.label}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">{job.selectedAccountLabel || "Modal account"}</TableCell>
+                            <TableCell>
+                              <span className="block">{submitted.date}</span>
+                              <span className="block text-xs text-muted-foreground">{submitted.time}</span>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums text-muted-foreground">{duration || "—"}</TableCell>
+                            <TableCell className="text-right tabular-nums" title="Estimated Modal cost">{formatCost(job.estimatedCostUsd)}</TableCell>
+                            <TableCell className="px-4 text-right"><Badge variant="outline" className={statusStyle(job.status)}>{statusLabel(job.status)}</Badge></TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
                 {jobs.length > JOBS_PER_PAGE && (
                   <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -535,7 +675,7 @@ export function ComputePage() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Add Account</DialogTitle>
-            <DialogDescription>Two private credentials are all MediaKeepa needs. The complete setup runs here—no PowerShell, profile activation, or manual deployment.</DialogDescription>
+            <DialogDescription>{huggingFaceAccess.configured ? "Paste this account's Modal credential. MediaKeepa will reuse your saved Hugging Face model access automatically." : "Paste the Modal credential and add Hugging Face model access once. Future accounts will only need their Modal credential."}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
@@ -546,18 +686,44 @@ export function ComputePage() {
               <Label htmlFor="compute-token">Modal token command</Label>
               <Textarea id="compute-token" value={credential} onChange={(event) => { setCredential(event.target.value); setFormError("") }} placeholder="modal token set --token-id ak-... --token-secret as-..." rows={4} className="font-mono text-xs" autoComplete="off" />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="compute-hf-token">Hugging Face access token</Label>
-              <Input id="compute-hf-token" type="password" value={hfToken} onChange={(event) => { setHfToken(event.target.value); setFormError("") }} placeholder="hf_..." className="font-mono text-xs" autoComplete="off" />
-              <p className="text-xs leading-5 text-muted-foreground">Before setup, accept the <a href="https://huggingface.co/briaai/RMBG-2.0" target="_blank" rel="noreferrer" className="underline underline-offset-4">RMBG-2.0 model terms</a>. MediaKeepa sends this token from memory into a private Modal secret and never writes it to disk.</p>
-            </div>
-            <Alert><LockKey size={16} /><AlertDescription>Your Modal token is encrypted locally for your Windows user. Neither credential is written to a shell profile or command history.</AlertDescription></Alert>
-            {submitting && <Alert><ArrowClockwise size={16} className="animate-spin" /><AlertDescription><span className="font-medium text-foreground">Setting up everything...</span><br />MediaKeepa is verifying the account, creating the secret, deploying both workers in {performance.mode} mode, and preparing the background model. The first setup can take several minutes; keep this page open.</AlertDescription></Alert>}
+            {huggingFaceAccess.configured ? (
+              <Alert><CheckCircle size={16} weight="fill" /><AlertDescription>Hugging Face model access is connected and will be reused for this account.</AlertDescription></Alert>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="compute-hf-token">Hugging Face access token <span className="font-normal text-muted-foreground">(one-time setup)</span></Label>
+                <Input id="compute-hf-token" type="password" value={hfToken} onChange={(event) => { setHfToken(event.target.value); setFormError("") }} placeholder="hf_..." className="font-mono text-xs" autoComplete="off" />
+                <p className="text-xs leading-5 text-muted-foreground">Before setup, accept the <a href="https://huggingface.co/briaai/RMBG-2.0" target="_blank" rel="noreferrer" className="underline underline-offset-4">RMBG-2.0 model terms</a>. MediaKeepa encrypts this token for your Windows user and reuses it across connected accounts.</p>
+              </div>
+            )}
+            <Alert><LockKey size={16} /><AlertDescription>Your credentials are encrypted locally for your Windows user and are never written to a shell profile or command history.</AlertDescription></Alert>
+            {submitting && <Alert><ArrowClockwise size={16} className="animate-spin" /><AlertDescription><span className="font-medium text-foreground">Verifying this account...</span><br />Once verified, this window closes and every MediaKeepa worker continues setting up in the background.</AlertDescription></Alert>}
             {formError && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{formError}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>Cancel</Button>
-            <Button onClick={() => void connect()} disabled={submitting || !credential.trim() || !hfToken.trim()}>{submitting ? "Setting up..." : "Set up account"}</Button>
+            <Button onClick={() => void connect()} disabled={submitting || !credential.trim() || (!huggingFaceAccess.configured && !hfToken.trim())}>{submitting ? "Adding..." : "Add account"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={hfDialogOpen} onOpenChange={(open) => { if (!savingHfToken) setHfDialogOpen(open) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{huggingFaceAccess.configured ? "Replace Hugging Face token" : "Add Hugging Face token"}</DialogTitle>
+            <DialogDescription>Enter this once for Background Remover. MediaKeepa encrypts it locally and applies it to every connected Modal account.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="shared-hf-token">Hugging Face access token</Label>
+              <Input id="shared-hf-token" type="password" value={replacementHfToken} onChange={(event) => { setReplacementHfToken(event.target.value); setHfError("") }} placeholder="hf_..." className="font-mono text-xs" autoComplete="off" />
+              <p className="text-xs leading-5 text-muted-foreground">Accept the <a href="https://huggingface.co/briaai/RMBG-2.0" target="_blank" rel="noreferrer" className="underline underline-offset-4">RMBG-2.0 model terms</a> before saving.</p>
+            </div>
+            {savingHfToken && <Alert><ArrowClockwise size={16} className="animate-spin" /><AlertDescription>Updating private model access across {accounts.length || "your future"} connected {accounts.length === 1 ? "account" : "accounts"}...</AlertDescription></Alert>}
+            {hfError && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{hfError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHfDialogOpen(false)} disabled={savingHfToken}>Cancel</Button>
+            <Button onClick={() => void saveHuggingFaceToken()} disabled={savingHfToken || !replacementHfToken.trim()}>{savingHfToken ? "Saving..." : "Save token"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -14,6 +14,7 @@ import { RecentUrls, addRecentUrl } from "@/components/RecentUrls"
 import { Footer } from "@/components/Footer"
 import { LegalPage } from "@/pages/LegalPage"
 import { ComputePage } from "@/pages/ComputePage"
+import { VideoEnhancerPage } from "@/pages/VideoEnhancerPage"
 import { AudioSeparatorPage } from "@/pages/AudioSeparatorPage"
 import { BackgroundRemoverPage } from "@/pages/BackgroundRemoverPage"
 import { Play, MusicNote, Image, DownloadSimple, ClosedCaptioning, CheckCircle, X } from "@phosphor-icons/react"
@@ -1377,8 +1378,21 @@ function PersistentPages() {
   const isDownloader = pathname === "/" || pathname === "/downloader"
   const isAudioSeparator = pathname === "/audio-separator"
   const isBackgroundRemover = pathname === "/background-remover"
+  const isVideoEnhancer = pathname === "/video-enhancer"
   const isCompute = pathname === "/compute" || pathname === "/compute/"
-  const isToolPage = isDownloader || isAudioSeparator || isBackgroundRemover || isCompute
+  const isToolPage = isDownloader || isAudioSeparator || isBackgroundRemover || isVideoEnhancer || isCompute
+
+  useEffect(() => {
+    document.title = isCompute
+      ? "MediaKeepa Compute"
+      : isVideoEnhancer
+        ? "Video Enhancer · MediaKeepa"
+        : isAudioSeparator
+          ? "Audio Separator · MediaKeepa"
+          : isBackgroundRemover
+            ? "Background Remover · MediaKeepa"
+            : "MediaKeepa"
+  }, [isAudioSeparator, isBackgroundRemover, isCompute, isVideoEnhancer])
 
   return (
     <>
@@ -1392,6 +1406,10 @@ function PersistentPages() {
 
       <section hidden={!isBackgroundRemover}>
         <BackgroundRemoverPage />
+      </section>
+
+      <section hidden={!isVideoEnhancer}>
+        <VideoEnhancerPage />
       </section>
 
       <section hidden={!isCompute}>

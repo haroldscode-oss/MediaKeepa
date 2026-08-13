@@ -5,6 +5,7 @@ MediaKeepa is a responsive web application for downloading, processing, and oper
 - **Media Downloader** — inspect a supported URL and download video, audio, images, or captions with yt-dlp and FFmpeg.
 - **Audio Separator** — separate an uploaded audio file into lossless Vocals and Music WAV stems with BS-RoFormer on Modal.
 - **Background Remover** — remove an image background with Bria RMBG-2.0 on Modal and download a full-resolution transparent PNG.
+- **Video Enhancer** — preview an exact frame or restore a complete video directly with the official SeedVR2-7B Sharp model on H100/H200-class Modal GPUs.
 - **MediaKeepa Compute** — connect Modal workspaces, monitor usage and apps, and manage routed workload bindings from a dedicated MediaKeepa page.
 
 The React interface and Flask API share one origin. It works on desktop and mobile browsers, supports light and dark themes, and is served locally at `http://127.0.0.1:8080` by default.
@@ -33,7 +34,7 @@ Stop both local services with:
 
 ## Performance modes
 
-Choose Economy or Fast directly on the MediaKeepa Compute page. Both use the multi-account Compute pool, keep `min_containers=0`, and scale fully to zero. Economy uses a 60-second idle window. Fast keeps only a recently used Audio Separator worker ready for 10 minutes or Background Remover worker for 5 minutes, then turns it off.
+Choose Economy or Fast directly on the MediaKeepa Compute page. Both use the multi-account Compute pool, keep `min_containers=0`, and scale fully to zero. Economy uses a 60-second idle window. Fast keeps only a recently used Audio Separator, Background Remover, or Video Enhancer worker ready briefly, then turns it off.
 
 ## Quality configuration
 
