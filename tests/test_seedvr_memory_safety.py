@@ -164,6 +164,14 @@ class SeedVrMemorySafetyTests(unittest.TestCase):
 
         self.assertNotIn("self.dit.to(get_device())", after_decode)
 
+    def test_compat_patch_exposes_real_seedvr_workspace_controls(self) -> None:
+        entrypoint, _infer = self._apply_compat_patch()
+
+        self.assertIn('parser.add_argument("--cfg_scale"', entrypoint)
+        self.assertIn('parser.add_argument("--cfg_rescale"', entrypoint)
+        self.assertIn('parser.add_argument("--preserve_source_color"', entrypoint)
+        self.assertIn("if use_colorfix and preserve_source_color", entrypoint)
+
     def test_gpu_memory_probe_does_not_initialize_cuda_in_parent_process(self) -> None:
         class _ForbiddenCuda:
             def __getattr__(self, name):

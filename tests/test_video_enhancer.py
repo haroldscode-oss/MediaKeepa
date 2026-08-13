@@ -62,6 +62,39 @@ class VideoEnhancerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("MP4", response.get_json()["message"])
 
+    @patch.object(server.video_enhancer_executor, "submit")
+    def test_workspace_settings_are_validated_and_queued(self, submit) -> None:
+        response = self.client.post(
+            "/api/video-enhancer/preview",
+            data={
+                "frame": (io.BytesIO(b"\x89PNG\r\n\x1a\npreview"), "selected-frame.png"),
+                "output_width": "1920",
+                "output_height": "1080",
+                "duration": "12.5",
+                "model": "natural",
+                "preserve_source_color": "false",
+                "detail": "18",
+                "denoise": "24",
+                "compression_repair": "36",
+                "sharpen": "7",
+                "grain": "3",
+                "output_quality": "balanced",
+                "output_fps": "30",
+                "seed": "777",
+                "cfg_scale": "1.1",
+                "cfg_rescale": "0.2",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        settings = submit.call_args.args[-1]
+        self.assertEqual(settings["model"], "natural")
+        self.assertFalse(settings["preserve_source_color"])
+        self.assertEqual(settings["compression_repair"], 36)
+        self.assertEqual(settings["output_quality"], "balanced")
+        self.assertEqual(settings["output_fps"], 30.0)
+
     def test_compute_submission_requires_the_current_worker_protocol(self) -> None:
         client = MagicMock()
         client.run_binary.return_value = type("Submission", (), {"id": "run-1"})()

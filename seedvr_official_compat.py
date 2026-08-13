@@ -38,7 +38,7 @@ def patch_entrypoint(source: str) -> str:
     )
 
     signature_needle = "def generation_loop(runner, video_path='./test_videos', output_dir='./results', batch_size=1, cfg_scale=1.0, cfg_rescale=0.0, sample_steps=1, seed=666, res_h=1280, res_w=720, sp_size=1, out_fps=None):"
-    signature_replacement = signature_needle[:-2] + ", exact_res_h=None, exact_res_w=None, lossless_output=False):"
+    signature_replacement = signature_needle[:-2] + ", exact_res_h=None, exact_res_w=None, lossless_output=False, preserve_source_color=True):"
     source = _replace_once(
         source, signature_needle, signature_replacement, "generation signature"
     )
@@ -105,11 +105,21 @@ def patch_entrypoint(source: str) -> str:
 """
     source = _replace_once(source, crop_needle, crop_replacement, "output block")
 
+    source = _replace_once(
+        source,
+        "                if use_colorfix:\n",
+        "                if use_colorfix and preserve_source_color:\n",
+        "color preservation toggle",
+    )
+
     parser_needle = '    parser.add_argument("--out_fps", type=float, default=None)\n'
     parser_replacement = parser_needle + (
+        '    parser.add_argument("--cfg_scale", type=float, default=1.0)\n'
+        '    parser.add_argument("--cfg_rescale", type=float, default=0.0)\n'
         '    parser.add_argument("--exact_res_h", type=int, default=None)\n'
         '    parser.add_argument("--exact_res_w", type=int, default=None)\n'
         '    parser.add_argument("--lossless_output", action="store_true")\n'
+        '    parser.add_argument("--preserve_source_color", action=argparse.BooleanOptionalAction, default=True)\n'
     )
     source = _replace_once(
         source, parser_needle, parser_replacement, "argument parser"

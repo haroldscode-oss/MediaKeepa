@@ -22,16 +22,17 @@ import modal
 
 
 APP_NAME = "mediakeepa-video-enhancer"
-VIDEO_ENHANCER_WORKER_PROTOCOL = "seedvr2-oom-v2"
+VIDEO_ENHANCER_WORKER_PROTOCOL = "seedvr2-workspace-v3"
 SEEDVR_REPOSITORY = "https://github.com/ByteDance-Seed/SeedVR.git"
 SEEDVR_COMMIT = "e4de8c24441a67e1b7df56abea10645059bb1185"
 MODEL_REPOSITORY = "ByteDance-Seed/SeedVR2-7B"
 MODEL_REVISION = "eb0c4281d41ba3767d4f14370f0e37e9e9180c16"
 SHARP_CHECKPOINT = "seedvr2_ema_7b_sharp.pth"
+NATURAL_CHECKPOINT = "seedvr2_ema_7b.pth"
 VAE_CHECKPOINT = "ema_vae.pth"
 MODEL_DIR = "/models"
 SEEDVR_DIR = "/opt/seedvr"
-MODEL_VOLUME_NAME = "mediakeepa-seedvr2-7b-sharp"
+MODEL_VOLUME_NAME = "mediakeepa-seedvr2-7b"
 HUGGINGFACE_SECRET_NAME = "MediaKeepa_backgroundremover"
 PREVIEW_GPU = ["H200", "H100"]
 FULL_GPU = ["H200:4", "H100:4"]
@@ -102,7 +103,7 @@ def _token() -> str | None:
     timeout=60 * 90,
 )
 def download_weights() -> str:
-    """Cache only the official Sharp 7B and VAE checkpoints in Modal."""
+    """Cache both official 7B restoration personalities and the VAE."""
 
     from huggingface_hub import snapshot_download
 
@@ -111,10 +112,10 @@ def download_weights() -> str:
         revision=MODEL_REVISION,
         local_dir=MODEL_DIR,
         token=_token(),
-        allow_patterns=[SHARP_CHECKPOINT, VAE_CHECKPOINT],
+        allow_patterns=[SHARP_CHECKPOINT, NATURAL_CHECKPOINT, VAE_CHECKPOINT],
     )
     model_volume.commit()
-    return f"{MODEL_REPOSITORY}@{MODEL_REVISION}/{SHARP_CHECKPOINT} cached in {MODEL_VOLUME_NAME}"
+    return f"{MODEL_REPOSITORY}@{MODEL_REVISION} Sharp + Natural cached in {MODEL_VOLUME_NAME}"
 
 
 @app.function(timeout=60)
@@ -161,22 +162,99 @@ def _model_dimensions(output_width: int, output_height: int) -> tuple[int, int]:
     return aligned_width, aligned_height
 
 
-def _prepare_checkpoints() -> None:
-    sharp = Path(MODEL_DIR) / SHARP_CHECKPOINT
+def _prepare_checkpoints(model: str = "sharp") -> None:
+    if model not in {"sharp", "natural"}:
+        raise ValueError("Choose either the SeedVR2 7B Sharp or 7B Natural model.")
+    selected = Path(MODEL_DIR) / (SHARP_CHECKPOINT if model == "sharp" else NATURAL_CHECKPOINT)
     vae = Path(MODEL_DIR) / VAE_CHECKPOINT
-    if not sharp.is_file() or not vae.is_file():
-        raise RuntimeError("SeedVR2-7B Sharp is not prepared. Run download_weights before enhancement.")
+    if not selected.is_file() or not vae.is_file():
+        raise RuntimeError(f"SeedVR2-7B {model.title()} is not prepared. Run download_weights before enhancement.")
 
     checkpoint_dir = Path(SEEDVR_DIR) / "ckpts"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     links = {
-        checkpoint_dir / "seedvr2_ema_7b.pth": sharp,
+        checkpoint_dir / "seedvr2_ema_7b.pth": selected,
         checkpoint_dir / "ema_vae.pth": vae,
     }
     for destination, source in links.items():
         if destination.exists() or destination.is_symlink():
             destination.unlink()
         destination.symlink_to(source)
+
+
+@dataclass(frozen=True)
+class _EnhancementSettings:
+    model: str = "sharp"
+    preserve_source_color: bool = True
+    seed: int = 666
+    cfg_scale: float = 1.0
+    cfg_rescale: float = 0.0
+    detail: int = 0
+    denoise: int = 0
+    compression_repair: int = 0
+    sharpen: int = 0
+    grain: int = 0
+    output_quality: str = "maximum"
+    output_fps: float | None = None
+
+
+def _validate_settings(
+    model: str = "sharp",
+    preserve_source_color: bool = True,
+    seed: int = 666,
+    cfg_scale: float = 1.0,
+    cfg_rescale: float = 0.0,
+    detail: int = 0,
+    denoise: int = 0,
+    compression_repair: int = 0,
+    sharpen: int = 0,
+    grain: int = 0,
+    output_quality: str = "maximum",
+    output_fps: float | None = None,
+) -> _EnhancementSettings:
+    selected_model = str(model).strip().lower()
+    if selected_model not in {"sharp", "natural"}:
+        raise ValueError("Choose either the SeedVR2 7B Sharp or 7B Natural model.")
+    selected_quality = str(output_quality).strip().lower()
+    if selected_quality not in {"maximum", "high", "balanced", "compact"}:
+        raise ValueError("Choose a valid Video Enhancer output quality.")
+
+    controls: dict[str, int] = {}
+    for name, value in {
+        "detail": detail,
+        "denoise": denoise,
+        "compression_repair": compression_repair,
+        "sharpen": sharpen,
+        "grain": grain,
+    }.items():
+        parsed = int(value)
+        if parsed < 0 or parsed > 100:
+            raise ValueError(f"Video Enhancer {name.replace('_', ' ')} must be between 0 and 100.")
+        controls[name] = parsed
+
+    parsed_seed = int(seed)
+    if parsed_seed < 0 or parsed_seed > 2_147_483_647:
+        raise ValueError("The SeedVR2 seed must be between 0 and 2,147,483,647.")
+    parsed_cfg_scale = float(cfg_scale)
+    parsed_cfg_rescale = float(cfg_rescale)
+    if not 0.0 <= parsed_cfg_scale <= 3.0:
+        raise ValueError("SeedVR2 CFG strength must be between 0 and 3.")
+    if not 0.0 <= parsed_cfg_rescale <= 1.0:
+        raise ValueError("SeedVR2 CFG rescale must be between 0 and 1.")
+    parsed_fps = None if output_fps in {None, "", 0, 0.0} else float(output_fps)
+    if parsed_fps is not None and not 1.0 <= parsed_fps <= 120.0:
+        raise ValueError("Output frame rate must be between 1 and 120 FPS.")
+
+    return _EnhancementSettings(
+        model=selected_model,
+        preserve_source_color=bool(preserve_source_color),
+        seed=parsed_seed,
+        cfg_scale=parsed_cfg_scale,
+        cfg_rescale=parsed_cfg_rescale,
+        output_quality=selected_quality,
+        output_fps=parsed_fps,
+        **controls,
+    )
 
 
 @dataclass(frozen=True)
@@ -348,11 +426,55 @@ def _largest_official_padded_window(frame_count: int, max_frames: int) -> int:
     )
 
 
-def _extract_temporal_window(source: Path, destination: Path, window: _TemporalWindow) -> None:
-    frame_filter = (
-        f"select=between(n\\,{window.input_start}\\,{window.input_end - 1}),"
-        "setpts=N/FRAME_RATE/TB"
-    )
+def _preprocess_filters(settings: _EnhancementSettings) -> list[str]:
+    filters: list[str] = []
+    if settings.compression_repair:
+        strength = settings.compression_repair / 100.0
+        filters.append(
+            "deblock=filter=strong:block=8:"
+            f"alpha={0.02 + 0.078 * strength:.4f}:"
+            f"beta={0.01 + 0.040 * strength:.4f}:"
+            f"gamma={0.01 + 0.040 * strength:.4f}:"
+            f"delta={0.01 + 0.040 * strength:.4f}"
+        )
+    if settings.denoise:
+        strength = settings.denoise / 100.0
+        luma = 0.5 + 7.5 * strength
+        chroma = 0.375 + 5.625 * strength
+        filters.append(f"hqdn3d={luma:.3f}:{chroma:.3f}:{luma * 1.5:.3f}:{chroma * 1.5:.3f}")
+    return filters
+
+
+def _postprocess_filters(
+    settings: _EnhancementSettings,
+    *,
+    include_fps: bool = True,
+) -> list[str]:
+    filters: list[str] = []
+    if settings.detail:
+        filters.append(f"cas=strength={0.8 * settings.detail / 100.0:.3f}")
+    if settings.sharpen:
+        filters.append(f"unsharp=5:5:{1.2 * settings.sharpen / 100.0:.3f}:5:5:0")
+    if settings.grain:
+        grain_strength = max(1, round(15 * settings.grain / 100.0))
+        filters.append(f"noise=alls={grain_strength}:allf=t+u")
+    if include_fps and settings.output_fps is not None:
+        filters.append(f"fps=fps={settings.output_fps:.6f}:round=near")
+    return filters
+
+
+def _extract_temporal_window(
+    source: Path,
+    destination: Path,
+    window: _TemporalWindow,
+    settings: _EnhancementSettings,
+) -> None:
+    frame_filters = [
+        f"select=between(n\\,{window.input_start}\\,{window.input_end - 1})",
+        "setpts=N/FRAME_RATE/TB",
+        *_preprocess_filters(settings),
+    ]
+    frame_filter = ",".join(frame_filters)
     completed = subprocess.run(
         [
             "ffmpeg", "-y", "-i", str(source), "-vf", frame_filter,
@@ -402,9 +524,11 @@ def _invoke_official_inference(
     output_height: int,
     gpu_count: int,
     *,
+    settings: _EnhancementSettings | None = None,
     lossless_output: bool = False,
 ) -> None:
-    _prepare_checkpoints()
+    settings = settings or _EnhancementSettings()
+    _prepare_checkpoints(settings.model)
     width, height = _validate_dimensions(output_width, output_height)
     model_width, model_height = _model_dimensions(width, height)
     command = [
@@ -416,7 +540,7 @@ def _invoke_official_inference(
         "--output_dir",
         str(output_dir),
         "--seed",
-        "666",
+        str(settings.seed),
         "--res_h",
         str(model_height),
         "--res_w",
@@ -427,7 +551,13 @@ def _invoke_official_inference(
         str(height),
         "--exact_res_w",
         str(width),
+        "--cfg_scale",
+        str(settings.cfg_scale),
+        "--cfg_rescale",
+        str(settings.cfg_rescale),
     ]
+    if not settings.preserve_source_color:
+        command.append("--no-preserve_source_color")
     if lossless_output:
         command.append("--lossless_output")
     environment = os.environ.copy()
@@ -454,7 +584,8 @@ def _invoke_official_inference(
         log_text = log.read()
     if completed.returncode != 0:
         print(log_text, file=sys.stderr, flush=True)
-        message = f"Official SeedVR2-7B Sharp inference failed: {_failure_detail(log_text)}."
+        model_label = "Sharp" if settings.model == "sharp" else "Natural"
+        message = f"Official SeedVR2-7B {model_label} inference failed: {_failure_detail(log_text)}."
         if _is_cuda_oom(log_text):
             raise _OfficialInferenceOOM(message)
         raise RuntimeError(message)
@@ -466,6 +597,7 @@ def _run_official_inference(
     output_width: int,
     output_height: int,
     gpu_count: int,
+    settings: _EnhancementSettings | None = None,
 ) -> Path:
     _invoke_official_inference(
         input_path.parent,
@@ -473,6 +605,7 @@ def _run_official_inference(
         output_width,
         output_height,
         gpu_count,
+        settings=settings,
     )
     output_path = output_dir / input_path.name
     if not output_path.is_file() or output_path.stat().st_size == 0:
@@ -485,6 +618,7 @@ def _join_temporal_windows(
     windows: list[_TemporalWindow],
     destination: Path,
     fps: Fraction,
+    settings: _EnhancementSettings,
 ) -> None:
     command = ["ffmpeg", "-y"]
     for path in restored_paths:
@@ -498,12 +632,23 @@ def _join_temporal_windows(
             f"setpts=PTS-STARTPTS[{label}]"
         )
         labels.append(f"[{label}]")
-    filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[outv]")
+    post_filters = _postprocess_filters(settings)
+    if post_filters:
+        filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[joined]")
+        filters.append(f"[joined]{','.join(post_filters)}[outv]")
+    else:
+        filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[outv]")
+    crf = {"maximum": 10, "high": 14, "balanced": 18, "compact": 22}[settings.output_quality]
+    output_rate = (
+        f"{settings.output_fps:.6f}"
+        if settings.output_fps is not None
+        else f"{fps.numerator}/{fps.denominator}"
+    )
     command.extend(
         [
             "-filter_complex", ";".join(filters), "-map", "[outv]", "-an",
-            "-r", f"{fps.numerator}/{fps.denominator}", "-c:v", "libx264",
-            "-preset", "slow", "-crf", "10", "-pix_fmt", "yuv420p",
+            "-r", output_rate, "-c:v", "libx264",
+            "-preset", "slow", "-crf", str(crf), "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", str(destination),
         ]
     )
@@ -526,13 +671,10 @@ def _restore_temporal_attempt(
     output_width: int,
     output_height: int,
     max_frames: int,
+    settings: _EnhancementSettings | None = None,
 ) -> Path:
+    settings = settings or _EnhancementSettings()
     windows = _temporal_windows(info.frame_count, max_frames)
-    if len(windows) == 1:
-        output_dir = attempt_root / "output"
-        output_dir.mkdir()
-        return _run_official_inference(source, output_dir, output_width, output_height, 4)
-
     input_root = attempt_root / "temporal-input"
     output_root = attempt_root / "temporal-output"
     input_root.mkdir()
@@ -549,7 +691,7 @@ def _restore_temporal_attempt(
         input_dir.mkdir()
         output_dir.mkdir()
         input_path = input_dir / f"window-{index:05d}.mkv"
-        _extract_temporal_window(source, input_path, window)
+        _extract_temporal_window(source, input_path, window, settings)
         print(f"SeedVR2 window {index + 1}/{len(windows)}: starting isolated official inference.", flush=True)
         _invoke_official_inference(
             input_dir,
@@ -557,6 +699,7 @@ def _restore_temporal_attempt(
             output_width,
             output_height,
             4,
+            settings=settings,
             lossless_output=True,
         )
         restored_path = output_dir / input_path.name
@@ -564,7 +707,7 @@ def _restore_temporal_attempt(
             raise RuntimeError(f"SeedVR2 did not produce temporal window {index + 1} of {len(windows)}.")
         restored_paths.append(restored_path)
     restored = attempt_root / "restored-video.mp4"
-    _join_temporal_windows(restored_paths, windows, restored, info.fps)
+    _join_temporal_windows(restored_paths, windows, restored, info.fps, settings)
     return restored
 
 
@@ -600,7 +743,9 @@ def _restore_video_in_temporal_windows(
     root: Path,
     output_width: int,
     output_height: int,
+    settings: _EnhancementSettings | None = None,
 ) -> Path:
+    settings = settings or _EnhancementSettings()
     info = _probe_video(source)
     initial_max_frames = _temporal_window_size(
         output_width,
@@ -619,6 +764,7 @@ def _restore_video_in_temporal_windows(
                 output_width,
                 output_height,
                 max_frames,
+                settings,
             )
         except _OfficialInferenceOOM as exc:
             # All CUDA work lives in the completed torchrun child processes.
@@ -639,7 +785,7 @@ def _restore_video_in_temporal_windows(
             model_width, model_height = _model_dimensions(output_width, output_height)
             final_padded_frames = _largest_official_padded_window(info.frame_count, max_frames)
             raise RuntimeError(
-                "Official SeedVR2-7B Sharp exhausted CUDA memory even after MediaKeepa "
+                f"Official SeedVR2-7B {settings.model.title()} exhausted CUDA memory even after MediaKeepa "
                 f"reduced inference to its smallest distinct four-GPU temporal load "
                 f"({final_padded_frames} padded frames per window) at {model_width}x{model_height}."
             ) from exc
@@ -676,6 +822,25 @@ def _mux_original_audio(restored_video: Path, source_video: Path, destination: P
         raise RuntimeError("The restored video was created, but its original audio could not be muxed safely.")
 
 
+def _filter_preview_frame(source: Path, destination: Path, filters: list[str]) -> None:
+    if not filters:
+        shutil.copy2(source, destination)
+        return
+    completed = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(source), "-vf", ",".join(filters),
+            "-frames:v", "1", str(destination),
+        ],
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode != 0 or not destination.is_file() or destination.stat().st_size == 0:
+        detail = completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else "unknown ffmpeg error"
+        raise RuntimeError(f"Could not apply the Video Enhancer preview processing: {detail}")
+
+
 @app.function(
     image=seedvr_image,
     gpu=PREVIEW_GPU,
@@ -693,10 +858,26 @@ def enhance_preview(
     output_width: int,
     output_height: int,
     worker_protocol: str | None = None,
+    model: str = "sharp",
+    preserve_source_color: bool = True,
+    seed: int = 666,
+    cfg_scale: float = 1.0,
+    cfg_rescale: float = 0.0,
+    detail: int = 0,
+    denoise: int = 0,
+    compression_repair: int = 0,
+    sharpen: int = 0,
+    grain: int = 0,
+    output_quality: str = "maximum",
+    output_fps: float | None = None,
 ) -> bytes:
-    """Enhance an exact selected frame with the full unquantized Sharp model."""
+    """Enhance an exact selected frame with the requested restoration pipeline."""
 
     _validate_worker_protocol(worker_protocol)
+    settings = _validate_settings(
+        model, preserve_source_color, seed, cfg_scale, cfg_rescale, detail,
+        denoise, compression_repair, sharpen, grain, output_quality, output_fps,
+    )
     if not frame_bytes or len(frame_bytes) > 64 * 1024 * 1024:
         raise ValueError("Preview frames must be non-empty PNG images no larger than 64 MB.")
     with tempfile.TemporaryDirectory(prefix="mediakeepa-seedvr-preview-") as temporary:
@@ -705,10 +886,20 @@ def enhance_preview(
         output_dir = root / "output"
         input_dir.mkdir()
         output_dir.mkdir()
+        source_path = root / "source.png"
         input_path = input_dir / "preview.png"
-        input_path.write_bytes(frame_bytes)
-        output_path = _run_official_inference(input_path, output_dir, output_width, output_height, 1)
-        return output_path.read_bytes()
+        source_path.write_bytes(frame_bytes)
+        _filter_preview_frame(source_path, input_path, _preprocess_filters(settings))
+        output_path = _run_official_inference(
+            input_path, output_dir, output_width, output_height, 1, settings,
+        )
+        final_path = root / "mediakeepa-preview.png"
+        _filter_preview_frame(
+            output_path,
+            final_path,
+            _postprocess_filters(settings, include_fps=False),
+        )
+        return final_path.read_bytes()
 
 
 @app.function(
@@ -727,10 +918,26 @@ def enhance_video(
     output_width: int,
     output_height: int,
     worker_protocol: str | None = None,
+    model: str = "sharp",
+    preserve_source_color: bool = True,
+    seed: int = 666,
+    cfg_scale: float = 1.0,
+    cfg_rescale: float = 0.0,
+    detail: int = 0,
+    denoise: int = 0,
+    compression_repair: int = 0,
+    sharpen: int = 0,
+    grain: int = 0,
+    output_quality: str = "maximum",
+    output_fps: float | None = None,
 ) -> bytes:
     """Restore a complete video on four Hopper GPUs and preserve its audio."""
 
     _validate_worker_protocol(worker_protocol)
+    settings = _validate_settings(
+        model, preserve_source_color, seed, cfg_scale, cfg_rescale, detail,
+        denoise, compression_repair, sharpen, grain, output_quality, output_fps,
+    )
     if not video_bytes:
         raise ValueError("The uploaded video is empty.")
     if len(video_bytes) > MAX_VIDEO_BYTES:
@@ -746,6 +953,7 @@ def enhance_video(
             root,
             output_width,
             output_height,
+            settings,
         )
         final_path = root / "mediakeepa-enhanced.mp4"
         _mux_original_audio(restored, input_path, final_path)

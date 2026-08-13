@@ -134,7 +134,7 @@ class ModalVideoEnhancerTests(unittest.TestCase):
 
         self.assertEqual(restored, expected)
         self.assertEqual(
-            [call.args[-1] for call in restore_attempt.call_args_list],
+            [call.args[-2] for call in restore_attempt.call_args_list],
             [97, 65],
         )
 
@@ -157,9 +157,44 @@ class ModalVideoEnhancerTests(unittest.TestCase):
                     worker._restore_video_in_temporal_windows(source, root, 720, 1280)
 
         self.assertEqual(
-            [call.args[-1] for call in restore_attempt.call_args_list],
+            [call.args[-2] for call in restore_attempt.call_args_list],
             [97, 17],
         )
+
+    def test_processing_controls_build_real_ffmpeg_filters(self) -> None:
+        settings = worker._validate_settings(
+            model="natural",
+            detail=25,
+            denoise=30,
+            compression_repair=40,
+            sharpen=15,
+            grain=10,
+            output_quality="balanced",
+            output_fps=30,
+        )
+
+        pre = worker._preprocess_filters(settings)
+        post = worker._postprocess_filters(settings)
+
+        self.assertTrue(any(value.startswith("deblock=") for value in pre))
+        self.assertTrue(any(value.startswith("hqdn3d=") for value in pre))
+        self.assertTrue(any(value.startswith("cas=") for value in post))
+        self.assertTrue(any(value.startswith("unsharp=") for value in post))
+        self.assertTrue(any(value.startswith("noise=") for value in post))
+        self.assertTrue(any(value.startswith("fps=") for value in post))
+        self.assertFalse(
+            any(
+                value.startswith("fps=")
+                for value in worker._postprocess_filters(settings, include_fps=False)
+            )
+        )
+        self.assertTrue(any(value == "noise=alls=2:allf=t+u" for value in post))
+
+    def test_invalid_workspace_settings_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "between 0 and 100"):
+            worker._validate_settings(denoise=101)
+        with self.assertRaisesRegex(ValueError, "output quality"):
+            worker._validate_settings(output_quality="raw")
 
     def test_runtime_error_is_preferred_over_torchrun_separator(self) -> None:
         detail = worker._failure_detail(

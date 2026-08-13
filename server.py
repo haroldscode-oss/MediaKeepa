@@ -1645,7 +1645,7 @@ def activate_compute_pool_routing():
 
 # Video Enhancer intentionally has no local or wrapper fallback. Every preview
 # and full-video job is routed to MediaKeepa's direct SeedVR2 Modal deployment.
-VIDEO_ENHANCER_WORKER_PROTOCOL = "seedvr2-oom-v2"
+VIDEO_ENHANCER_WORKER_PROTOCOL = "seedvr2-workspace-v3"
 VIDEO_ENHANCER_MAX_BYTES = 512 * 1024 * 1024
 VIDEO_ENHANCER_PREVIEW_MAX_BYTES = 64 * 1024 * 1024
 VIDEO_ENHANCER_ALLOWED_EXTENSIONS = {"mp4", "mov", "m4v", "mkv", "webm"}
@@ -1706,7 +1706,59 @@ def estimate_video_enhancement_cost(duration_seconds, output_width, output_heigh
     pixel_ratio = max(0.25, (output_width * output_height) / (1920 * 1080))
     # This is a conservative routing estimate, not a charge. The final Modal
     # bill remains based on the actual per-second Hopper GPU runtime.
-    return round(max(2.0, min(1000.0, duration * 0.06 * pixel_ratio)), 2)
+    return round(max(2.0, min(1000.0, duration * 0.286 * pixel_ratio)), 2)
+
+
+def video_enhancer_settings(form):
+    model = str(form.get("model") or "sharp").strip().lower()
+    if model not in {"sharp", "natural"}:
+        raise ValueError("Choose either the SeedVR2 7B Sharp or 7B Natural model.")
+    output_quality = str(form.get("output_quality") or "maximum").strip().lower()
+    if output_quality not in {"maximum", "high", "balanced", "compact"}:
+        raise ValueError("Choose a valid Video Enhancer output quality.")
+
+    controls = {}
+    for name in ("detail", "denoise", "compression_repair", "sharpen", "grain"):
+        try:
+            value = int(form.get(name) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Video Enhancer {name.replace('_', ' ')} must be a whole number.") from exc
+        if value < 0 or value > 100:
+            raise ValueError(f"Video Enhancer {name.replace('_', ' ')} must be between 0 and 100.")
+        controls[name] = value
+
+    try:
+        seed = int(form.get("seed") or 666)
+        cfg_scale = float(form.get("cfg_scale") or 1.0)
+        cfg_rescale = float(form.get("cfg_rescale") or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Choose valid advanced SeedVR2 values.") from exc
+    if seed < 0 or seed > 2_147_483_647:
+        raise ValueError("The SeedVR2 seed must be between 0 and 2,147,483,647.")
+    if not 0.0 <= cfg_scale <= 3.0:
+        raise ValueError("SeedVR2 CFG strength must be between 0 and 3.")
+    if not 0.0 <= cfg_rescale <= 1.0:
+        raise ValueError("SeedVR2 CFG rescale must be between 0 and 1.")
+
+    raw_fps = str(form.get("output_fps") or "").strip()
+    try:
+        output_fps = float(raw_fps) if raw_fps else None
+    except ValueError as exc:
+        raise ValueError("Choose a valid output frame rate.") from exc
+    if output_fps is not None and not 1.0 <= output_fps <= 120.0:
+        raise ValueError("Output frame rate must be between 1 and 120 FPS.")
+
+    return {
+        "model": model,
+        "preserve_source_color": str(form.get("preserve_source_color") or "true").lower()
+        in {"1", "true", "yes", "on"},
+        "seed": seed,
+        "cfg_scale": cfg_scale,
+        "cfg_rescale": cfg_rescale,
+        "output_quality": output_quality,
+        "output_fps": output_fps,
+        **controls,
+    }
 
 
 def validate_video_result(result_bytes, kind):
@@ -1720,15 +1772,19 @@ def validate_video_result(result_bytes, kind):
     return result_bytes
 
 
-def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height, duration_seconds=0):
+def run_video_enhancer_job(
+    job_id, input_path, kind, output_width, output_height, duration_seconds=0, settings=None
+):
     try:
+        settings = settings or video_enhancer_settings({})
+        model_label = "SeedVR2 7B Sharp" if settings["model"] == "sharp" else "SeedVR2 7B Natural"
         if not VIDEO_ENHANCER_CONTROL_PLANE_URL:
             raise RuntimeError("MediaKeepa Compute is required for Video Enhancer.")
         update_video_enhancer_job(
             job_id,
             status="processing",
             progress=12,
-            message="Routing Maximum Quality enhancement to the best available Modal account...",
+            message=f"Routing {model_label} to the best available Modal account...",
         )
         input_bytes = Path(input_path).read_bytes()
         client = get_modal_control_plane_client()
@@ -1751,6 +1807,7 @@ def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height
                 "output_width": output_width,
                 "output_height": output_height,
                 "worker_protocol": VIDEO_ENHANCER_WORKER_PROTOCOL,
+                **settings,
             },
             estimated_cost_usd=estimated_cost,
             timeout_seconds=2700 if is_preview else VIDEO_ENHANCER_TIMEOUT_SECONDS,
@@ -1761,9 +1818,9 @@ def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height
             job_id,
             progress=28,
             message=(
-                "Enhancing the selected frame with Maximum Quality..."
+                f"Enhancing the selected frame with {model_label}..."
                 if is_preview
-                else "Restoring the full video with four Hopper GPUs. This quality-first job can take a while..."
+                else f"Restoring the full video with {model_label} on four Hopper GPUs. This quality-first job can take a while..."
             ),
             compute_run_id=submitted.id,
             estimated_cost=estimated_cost,
@@ -1782,7 +1839,7 @@ def run_video_enhancer_job(job_id, input_path, kind, output_width, output_height
             job_id,
             status="completed",
             progress=100,
-            message="Enhanced preview ready." if is_preview else "Maximum Quality video ready.",
+            message="Enhanced preview ready." if is_preview else "Enhanced video ready.",
             preview_url=f"/api/video-enhancer/file/{job_id}/{filename}",
             download_url=f"/api/video-enhancer/file/{job_id}/{filename}?download=1",
             allowed_files={filename},
@@ -2499,6 +2556,7 @@ def _start_video_enhancer_job(kind):
         duration_seconds = float(request.form.get("duration") or 0)
         if duration_seconds < 0 or duration_seconds > 24 * 60 * 60:
             raise ValueError("Videos must be 24 hours or shorter.")
+        settings = video_enhancer_settings(request.form)
     except ValueError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
 
@@ -2518,11 +2576,12 @@ def _start_video_enhancer_job(kind):
         video_enhancer_jobs[job_id] = {
             "status": "queued",
             "progress": 5,
-            "message": "Your enhancement is queued for Maximum Quality processing.",
+            "message": "Your enhancement is queued for SeedVR2 processing.",
             "created_at": time.time(),
             "kind": kind,
             "width": output_width,
             "height": output_height,
+            "settings": settings,
             "allowed_files": set(),
         }
     video_enhancer_executor.submit(
@@ -2533,6 +2592,7 @@ def _start_video_enhancer_job(kind):
         output_width,
         output_height,
         duration_seconds,
+        settings,
     )
     return jsonify({"status": "queued", "job_id": job_id}), 202
 
