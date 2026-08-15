@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { CheckCircle, DownloadSimple, Image as ImageIcon, Upload, X } from "@phosphor-icons/react"
+import { CheckCircle, DownloadSimple, Image as ImageIcon, X } from "@phosphor-icons/react"
 import { toast } from "sonner"
 import { AppHeader } from "@/components/AppHeader"
 import { Button } from "@/components/ui/button"
@@ -157,7 +157,7 @@ export function BackgroundRemoverPage() {
             }}
           >
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-foreground text-background">
-              <Upload size={30} weight="bold" />
+              <ImageIcon size={34} weight="bold" />
             </div>
             <div className="space-y-1">
               <h1 className="text-xl font-semibold">Background Remover</h1>

@@ -540,8 +540,8 @@ export function VideoEnhancerPage() {
         {!selectedFile ? (
           <Card
             className={cn(
-              "cursor-pointer gap-4 overflow-hidden border-2 border-dashed bg-zinc-950 p-8 text-center text-white transition-colors sm:p-10",
-              dragging ? "border-violet-400 bg-violet-950/30" : "border-zinc-700 hover:border-zinc-500",
+              "cursor-pointer gap-4 overflow-hidden border-2 border-dashed p-8 text-center transition-colors sm:p-10",
+              dragging ? "border-foreground bg-muted/60" : "hover:border-muted-foreground",
             )}
             onClick={() => fileInputRef.current?.click()}
             onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
@@ -554,17 +554,17 @@ export function VideoEnhancerPage() {
               if (file) chooseFile(file)
             }}
           >
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500 text-white shadow-[0_0_45px_rgba(139,92,246,.35)]">
-              <FilmSlate size={31} weight="fill" />
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-foreground text-background">
+              <FilmSlate size={34} weight="bold" />
             </div>
             <div className="mx-auto max-w-xl space-y-2">
               <div className="flex items-center justify-center gap-2">
                 <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Video Enhancer</h1>
-                <Badge className="border-violet-400/30 bg-violet-400/15 text-violet-200">SeedVR2</Badge>
+                <Badge variant="outline">SeedVR2</Badge>
               </div>
-              <p className="font-medium text-zinc-200">Drop a video to open the restoration workspace</p>
-              <p className="text-sm leading-6 text-zinc-500">Before / after previews, restoration presets, real processing controls, output sizing, and cost estimates.</p>
-              <p className="pt-2 text-xs text-zinc-600">MP4, MOV, M4V, MKV, or WebM · up to 512 MB</p>
+              <p className="font-medium">Drop a video to open the restoration workspace</p>
+              <p className="text-sm leading-6 text-muted-foreground">Before / after previews, restoration presets, real processing controls, output sizing, and cost estimates.</p>
+              <p className="pt-2 text-xs text-muted-foreground">MP4, MOV, M4V, MKV, or WebM · up to 512 MB</p>
             </div>
             <input
               ref={fileInputRef}
