@@ -29,13 +29,13 @@ export function AppHeader() {
               className={({ isActive }) => {
                 const isCurrent = isActive || (to === "/downloader" && pathname === "/")
                 return cn(
-                  "flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground",
+                  "flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground",
                   isCurrent && "bg-foreground text-background hover:text-background"
                 )
               }}
               aria-label={label}
             >
-              <Icon size={13} weight="bold" />
+              <Icon size={13} className="size-[0.8125rem]" weight="bold" />
               <span className="hidden whitespace-nowrap sm:inline">{label}</span>
             </NavLink>
           ))}

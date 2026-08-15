@@ -1,6 +1,17 @@
 @import 'tailwindcss';
 @import "tw-animate-css";
 
+/*
+ * Match the visual density of 125% browser zoom on wide desktop displays.
+ * Scaling the root rem keeps layout and Radix portal coordinates in the same
+ * CSS coordinate system, avoiding the positioning bugs caused by CSS zoom.
+ */
+@media (min-width: 1280px) {
+  html {
+    font-size: 20px;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

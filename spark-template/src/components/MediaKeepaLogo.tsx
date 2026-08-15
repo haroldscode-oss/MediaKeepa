@@ -35,7 +35,7 @@ export function MediaKeepaLogo() {
         transition={{ duration: 0.5 }}
         onClick={handleClick}
       >
-        <Video weight="fill" size={32} style={{ color: '#8B5CF6' }} />
+        <Video weight="fill" size={32} className="size-8" style={{ color: '#8B5CF6' }} />
       </motion.div>
       <span className="text-2xl font-bold text-foreground tracking-tight">
         MediaKeepa
