@@ -949,13 +949,13 @@ function DownloaderPage() {
     : null
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 sm:space-y-8">
+    <div className="mx-auto w-full max-w-3xl space-y-4 sm:space-y-5">
       <AppHeader />
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.2 }}
-        className="mx-auto w-full max-w-2xl space-y-8 pb-8"
+        className="w-full space-y-8 pb-8"
       >
           <div className="space-y-6">
             <div className="relative">
