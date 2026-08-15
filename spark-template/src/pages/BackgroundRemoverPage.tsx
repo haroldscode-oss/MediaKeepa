@@ -138,7 +138,7 @@ export function BackgroundRemoverPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5">
+    <div className="mx-auto w-full max-w-3xl space-y-5">
       <AppHeader />
 
       <main className="space-y-5 pb-8">

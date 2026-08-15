@@ -531,14 +531,16 @@ export function VideoEnhancerPage() {
   const activeJob = isEnhancing || fullJob?.status === "error" ? fullJob : previewJob
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-4">
-      <AppHeader />
+    <div className="w-full space-y-5">
+      <div className="mx-auto w-full max-w-3xl">
+        <AppHeader />
+      </div>
 
-      <main className="space-y-4 pb-8">
+      <main className={cn("mx-auto w-full space-y-4 pb-8", selectedFile ? "max-w-[1600px]" : "max-w-3xl")}>
         {!selectedFile ? (
           <Card
             className={cn(
-              "cursor-pointer overflow-hidden border-2 border-dashed bg-zinc-950 px-6 py-20 text-center text-white transition-colors sm:py-28",
+              "cursor-pointer gap-4 overflow-hidden border-2 border-dashed bg-zinc-950 p-8 text-center text-white transition-colors sm:p-10",
               dragging ? "border-violet-400 bg-violet-950/30" : "border-zinc-700 hover:border-zinc-500",
             )}
             onClick={() => fileInputRef.current?.click()}
@@ -555,7 +557,7 @@ export function VideoEnhancerPage() {
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500 text-white shadow-[0_0_45px_rgba(139,92,246,.35)]">
               <FilmSlate size={31} weight="fill" />
             </div>
-            <div className="mx-auto mt-6 max-w-xl space-y-2">
+            <div className="mx-auto max-w-xl space-y-2">
               <div className="flex items-center justify-center gap-2">
                 <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Video Enhancer</h1>
                 <Badge className="border-violet-400/30 bg-violet-400/15 text-violet-200">SeedVR2</Badge>

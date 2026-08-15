@@ -411,7 +411,7 @@ export function AudioSeparatorPage() {
   const progress = status?.progress ?? 0
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5">
+    <div className="mx-auto w-full max-w-3xl space-y-5">
       <AppHeader />
 
       <main className="pb-8">
